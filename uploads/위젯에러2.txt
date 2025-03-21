@@ -1,0 +1,1293 @@
+<?php
+/* Copyright start
+  Copyright (C) 2008 - 2023 Fortinet Inc.
+  All rights reserved.
+  FORTINET CONFIDENTIAL & FORTINET PROPRIETARY SOURCE CODE
+  Copyright end */
+
+namespace App\Controller;
+
+use stdClass;
+use App\Entity\Core\Widget;
+use Psr\Log\LoggerInterface;
+use InvalidArgumentException;
+use App\Constants\AppConstants;
+use App\Service\MetadataHelper;
+use App\Service\UtilityService;
+use App\Security\Voter\FsrVoter;
+use App\Service\BulkRequestService;
+use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use ApiPlatform\Core\Api\IriConverterInterface;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
+use Symfony\Component\Serializer\SerializerInterface;
+use Symfony\Component\Filesystem\Exception\IOException;
+use ApiPlatform\Core\Api\ResourceClassResolverInterface;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
+use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\Security\Core\Exception\AccessDeniedException;
+use App\Service\SolutionPackUtilityService;
+
+class WidgetController extends BaseController
+{
+    const WIDGET_DEVELOPMENT_PATH = '/opt/cyops-ui/widgets/development/';
+    const WIDGET_TEMPLATES_PATH = '/opt/cyops-ui/widgets/templates/';
+    const WIDGET_PATH = '/opt/cyops-ui/widgets/installed/';
+    const WIDGET_TMP_PATH = '/tmp/widgets/';
+    const WIDGETDUPLICATEMESSAGE = 'Widget with Name - %s Version - %s already exists in widget workspace.';
+    protected $fsrVoter;
+    protected $bulkRequestService;
+    protected $systemWidgetNames = [];
+
+    /** @var FileSystem */
+    protected $fileSystem;
+    protected $utilityService;
+    protected $iriConverter;
+
+    public function __construct(
+        FsrVoter $fsrVoter,
+        protected ContainerInterface $containers,
+        UtilityService $utilityService,
+        BulkRequestService $bulkRequestService,
+        ResourceClassResolverInterface $resourceClassResolver,
+        TagAwareCacheInterface $cache,
+        protected MetadataHelper $metadataHelper,
+        IriConverterInterface $iriConverter,
+        protected SerializerInterface $serializer,
+        protected LoggerInterface $logger,
+        protected SolutionPackUtilityService $solutionpackUtilityService,
+    ) {
+        $this->fsrVoter = $fsrVoter;
+        $this->iriConverter = $iriConverter;
+        $this->utilityService = $utilityService;
+        $this->bulkRequestService = $bulkRequestService;
+        parent::__construct($resourceClassResolver, $containers, $cache, $metadataHelper, $serializer, $logger);
+
+        $systemWidgetsFile = file_get_contents('/opt/cyops-api/src/DataFixtures/Widgets/widgets.json');
+        $systemWidgets = json_decode($systemWidgetsFile);
+
+        foreach ($systemWidgets->widgets as $w) {
+            array_push($this->systemWidgetNames, $w->name . '-' . $w->version);
+        }
+    }
+
+    protected function widgetExistingCheck($widgetName, $widgetVersion)
+    {
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        $widgetExisting = $widgetRepository->findOneBy(array("name" => $widgetName, "version" => $widgetVersion));
+        return ($widgetExisting ? true : false);
+    }
+
+    protected function renameFileFolder($oldPath, $newPath, $widgetFolderPath)
+    {
+        try {
+            $oldFilePath = $oldPath;
+            $newFilePath = $newPath;
+            rename($oldFilePath, $newFilePath);
+        } catch (IOExceptionInterface | \Exception $error) {
+            throw new BadRequestHttpException("Unable to update file - " . $error->getMessage(), $error);
+        }
+    }
+
+    protected function updateWidget($widgetData, $uuid, $widgetPath)
+    {
+        try {
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $widget = $entityManager->getRepository(Widget::class)->find($uuid);
+            if ($widget == null) {
+                return new Response("Widget with uuid :" . $uuid . " not found ", Response::HTTP_NOT_FOUND);
+            }
+
+            if (array_key_exists('title', $widgetData)) {
+                $widget->setTitle($widgetData['title']);
+                $widget->setLabel($widgetData['title']);  // add a fromJSON construct method in widget.phps
+            }
+            if (array_key_exists('label', $widgetData)) {
+                $widget->setLabel($widgetData['label']);  // add a fromJSON construct method in widget.phps
+            }
+            if (array_key_exists('subTitle', $widgetData)) {
+                $widget->setSubTitle($widgetData['subTitle']);
+            }
+            if (array_key_exists('version', $widgetData)) {
+                $widget->setVersion($widgetData['version']);
+            }
+            if (array_key_exists('metadata', $widgetData)) {
+                $widget->setMetadata((array) $widgetData['metadata']);
+            }
+            if (array_key_exists('draft', $widgetData)) {
+                $widget->setDraft($widgetData['draft']);
+            }
+            if (array_key_exists('installed', $widgetData)) {
+                $widget->setInstalled($widgetData['installed']);
+            }
+            if (array_key_exists('enablePublish', $widgetData)) {
+                $widget->setEnablePublish($widgetData['enablePublish']);
+            }
+            if (array_key_exists('category', $widgetData) && isset($widgetData['category'])) {
+                $category_array = $widgetData['category'];
+                $categories = $this->solutionpackUtilityService->prepareCategoryData($category_array);
+                if (!empty($categories)) {
+                    $existingWidgetCategories = $widget->getCategory();
+                    if ($categories && $existingWidgetCategories) {
+                        foreach ($existingWidgetCategories as $existingWidgetCategory) {
+                            $widget->removeCategory($existingWidgetCategory);
+                        }
+                    }
+                    if ($categories) {
+                        foreach ($categories as $category) {
+                            $picklistObject = $this->iriConverter->getItemFromIri($category, ['fetch_data' => false]);
+                            $widget->addCategory($picklistObject);
+                        }
+                    }
+                }
+            }
+
+            $entityManager->flush();
+
+            $serializer = $this->container->get('serializer');
+            $normalizedWidgetData = $serializer->normalize($widget, 'jsonld');
+            $normalizedWidgetData['tree'] = $this->buildMenu($widgetPath);
+            return new Response(json_encode($normalizedWidgetData));
+        } catch (UniqueConstraintViolationException $e) {
+            return new Response(Response::HTTP_CONFLICT);
+        } catch (BadRequestHttpException $e) {
+            $this->utilityService->removeWidgetDir($widgetPath);
+            return new Response($e->getMessage(), Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    protected function normalizedDevPathCheck($path)
+    {
+        $subPath = substr($this->utilityService->normalize_path($path), 0, strlen(self::WIDGET_DEVELOPMENT_PATH));
+        if ($subPath !== self::WIDGET_DEVELOPMENT_PATH) {
+            throw new InvalidArgumentException("Invalid Path intercepted.");
+        }
+    }
+
+    protected function fileFolderOperationDetails(Request $request, $uuid, $checkExtension = false)
+    {
+        $requestContent = json_decode($request->getContent())->fileData;
+        $widgetData = $this->findWidgetById($uuid);
+        $result = array(
+            'widgetFolderPath' => self::WIDGET_DEVELOPMENT_PATH . $widgetData['name'] . '-' . $widgetData['version'],
+        );
+        if (isset($requestContent->xpath)) {
+            $result['widgetAbsXpath'] = rtrim(self::WIDGET_DEVELOPMENT_PATH, '/') . $requestContent->xpath;
+            $this->normalizedDevPathCheck($result['widgetAbsXpath']);
+        }
+        if (isset($requestContent->oldFilePath)) {
+            $result['oldFilePath'] = rtrim(self::WIDGET_DEVELOPMENT_PATH, '/') . $requestContent->oldFilePath;
+            $result['newFilePath'] = rtrim(self::WIDGET_DEVELOPMENT_PATH, '/') . $requestContent->newFilePath;
+            $this->normalizedDevPathCheck($result['oldFilePath']);
+            $this->normalizedDevPathCheck($result['newFilePath']);
+        }
+        if ($checkExtension) {
+            $pathToCheck = $requestContent->xpath ?? $result['newFilePath'];
+            $extension = pathinfo($pathToCheck)['extension'];
+            if (!in_array($extension, AppConstants::WIDGET_ALLOWED_FILE_EXTENSIONS)) {
+                throw new BadRequestHttpException("Invalid file specified");
+            }
+        }
+        if (isset($requestContent->fileContent)) {
+            $result['fileContent'] = $requestContent->fileContent;
+        }
+        if (isset($requestContent->type)) {
+            $result['fileType'] = $requestContent->type;
+        }
+        if (isset($requestContent->fileName)) {
+            $result['fileName'] = $requestContent->fileName;
+        }
+        if (isset($requestContent->folderName)) {
+            $result['folderName'] = $requestContent->folderName;
+        }
+        return $result;
+    }
+
+    public function folderOperationsPut(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $details = $this->fileFolderOperationDetails($request, $uuid, false);
+
+        $this->renameFileFolder($details['oldFilePath'], $details['newFilePath'], $details['$widgetFolderPath']);
+
+        // Sync Folder HA
+        $this->utilityService->syncHANodes(['source' => $details['oldFilePath'], 'target' => $details['newFilePath']], 'rename');
+
+        return $this->updateWidget(array('enablePublish' => 1), $uuid, $details['widgetFolderPath']);
+    }
+
+    public function folderOperationsPost(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $details = $this->fileFolderOperationDetails($request, $uuid, false);
+
+        // Space is not allowed in folder names
+        if (array_key_exists('folderName', $details) && $details['folderName'] == trim($details['folderName']) && strpos($details['folderName'], ' ') !== false) {
+            return new Response('Folder name must not contain spaces', Response::HTTP_BAD_REQUEST);
+        }
+
+        if (!file_exists($details['widgetAbsXpath'])) {
+            mkdir($details['widgetAbsXpath']);
+        }
+
+        // Sync Folder HA
+        $this->utilityService->syncHANodes($details['widgetAbsXpath'], 'copy');
+
+        return $this->updateWidget(array('enablePublish' => 1), $uuid, $details['widgetFolderPath']);
+    }
+
+    public function folderOperationsDelete(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $widgetsFileSystem = new Filesystem();
+        $details = $this->fileFolderOperationDetails($request, $uuid, false);
+
+        if (file_exists($details['widgetAbsXpath'])) {
+            $path = $details['widgetAbsXpath'];
+            array_map('unlink', glob("$path/*"));
+            $widgetsFileSystem->remove($details['widgetAbsXpath']);
+        }
+
+        // Sync Folder HA
+        $this->utilityService->syncHANodes($details['widgetAbsXpath'], 'delete');
+
+        return $this->updateWidget(array('enablePublish' => 1), $uuid, $details['widgetFolderPath']);
+    }
+
+    public function fileOperationsGet(Request $request, $uuid)
+    {
+        if (!($this->fsrVoter->isGranted("read.widgets") || $this->fsrVoter->isGranted("execute.widgets"))) {
+            throw new AccessDeniedException();
+        }
+        $widgetData = $this->findWidgetById($uuid);
+
+        // UI is passing an additional key to let backend know to pick files form widgets_developement folder or widgets_folder
+        if ($request->get('path') === 'installed') {
+            $widgetFolderPath = self::WIDGET_PATH . $widgetData['name'] . '-' . $widgetData['version'];
+        } else {
+            $widgetFolderPath = self::WIDGET_DEVELOPMENT_PATH . $widgetData['name'] . '-' . $widgetData['version'];
+        }
+
+        return new Response(json_encode($this->buildFilePathList($widgetFolderPath)), Response::HTTP_OK);
+    }
+
+    public function fileOperationsPut(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $details = $this->fileFolderOperationDetails($request, $uuid, true);
+        $fileName = basename($details["widgetAbsXpath"]);
+
+        if ($fileName == "info.json") {
+            try {
+                $widgetData = json_decode($details['fileContent']);
+                $this->validateWidgetInput($widgetData); // Validates the following fields for input format - name, verions, pages, compatability, certified
+            } catch (BadRequestHttpException $e) {
+                return new Response($e->getMessage(), Response::HTTP_BAD_REQUEST);
+            }
+        }
+
+        if (array_key_exists('oldFilePath', $details)) {
+            $this->renameFileFolder($details['oldFilePath'], $details['newFilePath'], $details['$widgetFolderPath']);
+            $this->utilityService->syncHANodes(['source' => $details['oldFilePath'], 'target' => $details['newFilePath']], 'rename');
+        } else {
+            try {
+                $this->utilityService->filePutContent($details['widgetAbsXpath'], $details['fileContent']);
+
+                // Sync Files HA in widgets_development
+                $this->utilityService->syncHANodes($details['widgetAbsXpath'], 'copy');
+            } catch (IOExceptionInterface | \Exception $error) {
+                throw new BadRequestHttpException("Unable to update file - " . $error->getMessage(), $error);
+            }
+        }
+
+        $fileContent = array_key_exists('fileContent', $details) ? json_decode($details['fileContent'], true) : null;
+        $widgetCategoryData = is_array($fileContent) && array_key_exists('metadata', $fileContent) && array_key_exists('category', $fileContent['metadata']) ? array('enablePublish' => 1, 'category' => $fileContent['metadata']['category']) : array('enablePublish' => 1);
+        return $this->updateWidget($widgetCategoryData, $uuid, $details['widgetFolderPath']);
+    }
+
+    public function fileOperationsPost(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $details = $this->fileFolderOperationDetails($request, $uuid, true);
+        // Space is not allowed in file names
+        if (array_key_exists('fileName', $details) && $details['fileName'] == trim($details['fileName']) && strpos($details['fileName'], ' ') !== false) {
+            return new Response('File name must not contain spaces', Response::HTTP_BAD_REQUEST);
+        }
+        if (array_key_exists('fileContent', $details)) {
+            $this->createWidgetFile($details['widgetAbsXpath'], $details['fileContent']);
+
+            // Sync Files HA in widgets_development
+            $this->utilityService->syncHANodes($details['widgetAbsXpath'], 'copy');
+
+            return $this->updateWidget(array('enablePublish' => 1), $uuid, $details['widgetFolderPath']);
+        } else {
+            if ($this->isImageFile($details['widgetAbsXpath'])) {
+                $responseData = 'data:' . $details['fileType'] . ';base64,' . base64_encode(file_get_contents($details['widgetAbsXpath']));
+            } else {
+                $responseData = file_get_contents($details['widgetAbsXpath']);
+            }
+            return new Response(json_encode(array('fileContent' => $responseData)));
+        }
+    }
+
+    public function fileOperationsDelete(Request $request, $uuid)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+
+        $details = $this->fileFolderOperationDetails($request, $uuid, false);
+
+        unlink($details['widgetAbsXpath']);
+        // Sync Files HA in widgets_development
+        $this->utilityService->syncHANodes($details['widgetAbsXpath'], 'delete');
+
+        return $this->updateWidget(array('enablePublish' => 1), $uuid, $details['widgetFolderPath']);
+    }
+
+    public function createWidget(Request $request)
+    {
+        if (!$this->fsrVoter->isGranted("create.widgets")) {
+            throw new AccessDeniedException();
+        }
+
+        $requestJsonContent = json_decode($request->getContent());
+        $widgetFolderPath = self::WIDGET_DEVELOPMENT_PATH . $requestJsonContent->name . '-' . $requestJsonContent->version;
+        $widgetTemplatePath = self::WIDGET_TEMPLATES_PATH . 'generic/';
+
+        if ($this->widgetExistingCheck($requestJsonContent->name, $requestJsonContent->version)) {
+            return new Response(sprintf(self::WIDGETDUPLICATEMESSAGE, $requestJsonContent->name, $requestJsonContent->version), Response::HTTP_CONFLICT);
+        }
+
+        try {
+            $this->validateWidgetInput($requestJsonContent); // Validates the following fields for input format - name, verions, pages, compatability, certified
+        } catch (BadRequestHttpException $e) {
+            return new Response($e->getMessage(), Response::HTTP_BAD_REQUEST);
+        }
+
+        // Creating files from template
+        try {
+            $this->createWidgetFile($widgetFolderPath . '/info.json', json_encode($requestJsonContent, JSON_PRETTY_PRINT));
+            $this->buildWidgetFilesFromTemplate($widgetTemplatePath, $widgetFolderPath, $requestJsonContent->name, $requestJsonContent->version);
+            $requestJsonContent->draft = true;
+            $requestJsonContent->enablePublish = true;
+            $requestJsonContent->local = true; // added this flag to identify the development solution pack for workspace
+            return $this->saveWidgetInDB($requestJsonContent, $widgetFolderPath, 'Create');
+        } catch (BadRequestHttpException | \Exception $e) {
+            throw new HttpException(Response::HTTP_BAD_REQUEST, $e->getMessage(), $e);
+        }
+    }
+
+    protected function repoTgzData($widgetName, $widgetVersion)
+    {
+        $client = new \GuzzleHttp\Client();
+        $widgetFound = false;
+
+        try {
+            // Get TGZ data from repo
+            $widgetRepoName = $widgetName . '-' . $widgetVersion;
+            $widgetTgzRepoLink = sprintf('https://%s/fsr-widgets/%s/%s.tgz', getenv("REPOSERVER") ? getenv("REPOSERVER") : getenv("product_yum_server"), $widgetRepoName, $widgetRepoName);
+            $responseObject = $client->request('GET', $widgetTgzRepoLink, ['verify' => false]);
+            $retunArray = [
+                'fileData' => $responseObject->getBody()->getContents(),
+                'widgetRepoName' => $widgetRepoName
+            ];
+        } catch (NotFoundHttpException | \Exception $e) {
+            // Try to get the widget's latest version
+            $widgetJsonRepoLink = sprintf('https://%s/fsr-widgets/widgets.json', getenv("REPOSERVER") ? getenv("REPOSERVER") : getenv("product_yum_server"));
+            $widgetJsonObject = $client->request('GET', $widgetJsonRepoLink, ['verify' => false]);
+            $widgetJson = json_decode($widgetJsonObject->getBody()->getContents(), true);
+            $repoWidgets = array_keys($widgetJson);
+
+            if (!in_array($widgetRepoName, $repoWidgets)) {
+                foreach ($repoWidgets as $repoWidget) {
+                    if (stripos($repoWidget, $widgetName) !== false) {
+                        $widgetFound = true;
+                        $widgetTgzRepoLink = sprintf('https://%s/fsr-widgets/%s/%s.tgz', getenv("REPOSERVER") ? getenv("REPOSERVER") : getenv("product_yum_server"), $repoWidget, $repoWidget);
+                        $responseObject = $client->request('GET', $widgetTgzRepoLink, ['verify' => false]);
+                        $widgetRepoName = $repoWidget;
+                    }
+                }
+            }
+            if ($widgetFound) {
+                $widgetRepoNameExplode = explode('-', $widgetRepoName);
+                if ($this->widgetExistingCheck($widgetRepoNameExplode[0], $widgetRepoNameExplode[1])) {
+                    return new Response('Conflict while widget creation. Requested widget already exists(' . $widgetRepoName . ').', Response::HTTP_CONFLICT);
+                }
+                $retunArray = [
+                    'fileData' => $responseObject->getBody()->getContents(),
+                    'widgetRepoName' => $widgetRepoName
+                ];
+            } else {
+                return new Response("Invalid widget name or request widget is not found on repo - " . $widgetTgzRepoLink, Response::HTTP_BAD_REQUEST);
+            }
+        }
+        return $retunArray;
+}
+
+public function installRepoWidget(Request $request)
+{
+$requestBody = json_decode($request->getContent());
+$widgetName = $requestBody->name;
+$widgetVersion = $requestBody->version;
+
+if (!$this->fsrVoter->isGranted("create.widgets")) {
+    throw new AccessDeniedException();
+}
+if (!$widgetName) {
+    return new Response('Missing widget name', Response::HTTP_BAD_REQUEST);
+}
+if (!$requestBody->version) {
+    return new Response('Missing widget version', Response::HTTP_BAD_REQUEST);
+}
+if ($requestBody->replace) {
+    $replaceVersion = isset($requestBody->replaceVersions) ? $requestBody->replaceVersions : [];
+    $this->deleteExistingWidgets($widgetName, $requestBody->replace, $replaceVersion);
+}
+if ($this->widgetExistingCheck($widgetName, $widgetVersion)) {
+    return new Response(sprintf(self::WIDGETDUPLICATEMESSAGE, $widgetName, $widgetVersion), Response::HTTP_CONFLICT);
+}
+$tgzResponse = $this->repoTgzData($widgetName, $widgetVersion);
+$logger->info('tgzResponse==',$tgzResponse);
+if ($tgzResponse instanceof Response) {
+    return $tgzResponse;
+}
+$fileData = $tgzResponse['fileData'];
+$widgetRepoName = $tgzResponse['widgetRepoName'];
+
+$tgzFileName = sprintf('%s.tgz', $widgetRepoName);
+$widgetPath = self::WIDGET_PATH . $widgetRepoName;
+
+$archiveFolder = $this->unzipWidgetFile($fileData, $widgetRepoName, self::WIDGET_PATH);
+$logger->info('archiveFolder==',$archiveFolder)
+if ($archiveFolder != $widgetRepoName) {
+    $widgetPath = self::WIDGET_PATH . $archiveFolder;
+}
+try {
+
+    // Save the widget in DB
+    $widgetInfoContent = json_decode(file_get_contents(self::WIDGET_PATH . $widgetRepoName . '/info.json'));
+    $logger->info('widgetInfoContent==',$widgetInfoContent); 
+            $widgetInfoContent->draft = false;
+            $widgetInfoContent->installed = true;
+            $widgetInfoContent->importedBy = $requestBody->importedBy ?? [];
+            return $this->saveWidgetInDB($widgetInfoContent, $widgetPath, 'Install');
+        } catch (BadRequestHttpException | \Exception $e) {
+            // Code to clear any files that got unzipped
+            $this->removeTarFiles(self::WIDGET_PATH, pathinfo($tgzFileName, PATHINFO_FILENAME));
+            $this->fileSystem->remove(self::WIDGET_TMP_PATH);
+            throw new BadRequestHttpException("Unable to install Widget - " . $e->getMessage(), $e);
+        }
+    }
+
+    protected function deleteExistingWidgets($widgetName, $replace, $replaceVersions = [])
+    {
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        $serializer = $this->container->get('serializer');
+        //$replace might be boolean or string == will handle both comparasion. 
+        if ($replace == 'true') {
+            if (!$this->fsrVoter->isGranted("delete.widgets")) {
+                throw new AccessDeniedException();
+            }
+            if (empty($replaceVersions)) {
+                $widget = $widgetRepository->findBy(array('name' => $widgetName));
+            } else {
+                $widget = $widgetRepository->findBy(array('name' => $widgetName, 'version' => $replaceVersions));
+            }
+        } else {
+            return;
+        }
+
+        $existingWidgetList = $serializer->normalize($widget, 'jsonld');
+        $iriList = [];
+        $widgetPathList = [];
+        if (count($existingWidgetList) > 0) {
+            foreach ($existingWidgetList as $wid) {
+                $item = new stdClass();
+                $item->{'@id'} = $wid['@id'];
+                $iriList[] = $item;
+                $widgetPathList[] = self::WIDGET_PATH . $wid['name'] . '-' . $wid['version'];
+            }
+
+            $objectDataClone = new stdClass();
+            $objectDataClone->{'data'} = $iriList;
+            $request = new Request();
+            $headers = $request->headers->all();
+            $queryParams = $request->query->all();
+            try {
+                $resourceClass = $this->getResourceFromClassName('widgets');
+                $this->bulkRequestService->prepareUpdateDeleteSubRequest($resourceClass, $objectDataClone, '/api/3/widgets', $headers, $queryParams, 'DELETE');
+            } catch (BadRequestHttpException | \Exception $e) {
+                throw new BadRequestHttpException();
+            } finally {
+                foreach ($widgetPathList as $path) {
+                    $this->utilityService->syncHANodes($path, 'delete');
+                }
+            }
+        }
+    }
+
+    protected function checkCompatibilityVersion($widgetVersionArray)
+    {
+        $widgetVersionArrayNumbers = [];
+        foreach ($widgetVersionArray as $version) {
+            array_push($widgetVersionArrayNumbers, str_replace('.', '', $version));
+        }
+        return (max($widgetVersionArrayNumbers) < 702) ? false : true;
+    }
+
+    public function importWidget(Request $request)
+    {
+        if (!$this->fsrVoter->isGranted("create.widgets")) {
+            throw new AccessDeniedException();
+        }
+        if (!$request->files->has('file')) {
+            throw new BadRequestHttpException('No file specified.');
+        }
+
+        /** @var UploadedFile $upload */
+        $upload = $request->files->get('file');
+        $replace = $request->request->get('replace', false);
+        $replaceVersions = $request->request->get('replaceVersions', []);
+        $fileName = $upload->getClientOriginalName();
+        $fileExt = $upload->getClientOriginalExtension();
+        $widgetFileName = explode("." . $fileExt, $fileName)[0];
+        $widgetFileNameExplode = explode('-', $widgetFileName);
+        $openFile = $upload->openFile();
+        $readFile = $openFile->fread($openFile->getSize());
+        $this->fileSystem = new Filesystem();
+        $this->fileSystem->mkdir(self::WIDGET_TMP_PATH);
+        $archiveFolder = $this->unzipWidgetFile($readFile, $widgetFileName, self::WIDGET_TMP_PATH);
+        if ($archiveFolder != $widgetFileName) {
+            $widgetFileNameExplode = explode('-', $archiveFolder);
+            $widgetFileName = $archiveFolder;
+        }
+        try {
+            $widgetTmpPath = self::WIDGET_TMP_PATH . $widgetFileName;
+            $widgetInfoContent = json_decode(file_get_contents($widgetTmpPath . '/info.json'));
+
+            if (!$this->checkCompatibilityVersion($widgetInfoContent->metadata->compatibility)) {
+                return new Response('Widget is not compatible with the current platform version.', Response::HTTP_BAD_REQUEST);
+            }
+            if ($replace == 'true') {
+                $this->deleteExistingWidgets($widgetFileNameExplode[0], $replace, $replaceVersions);
+            } elseif ($this->widgetExistingCheck($widgetFileNameExplode[0], $widgetFileNameExplode[1])) {
+                $this->fileSystem->remove(self::WIDGET_TMP_PATH);
+                return new Response(sprintf(self::WIDGETDUPLICATEMESSAGE, $widgetFileNameExplode[0], $widgetFileNameExplode[1]), Response::HTTP_CONFLICT);
+            }
+
+            if ($widgetInfoContent->development) {
+                $widgetInfoContent->draft = true;
+                $widgetInfoContent->installed = false;
+                $widgetPath = self::WIDGET_DEVELOPMENT_PATH . $widgetFileName;
+            } else {
+                $widgetInfoContent->draft = false;
+                $widgetInfoContent->installed = true;
+                $widgetPath = self::WIDGET_PATH . $widgetFileName;
+            }
+            $this->utilityService->copyWidgetFiles($widgetTmpPath, $widgetPath, $widgetInfoContent->name, $widgetInfoContent->version, false);
+            $widgetInfoContentCopy = clone $widgetInfoContent;
+            unset($widgetInfoContent->development);
+            unset($widgetInfoContentCopy->development);
+            unset($widgetInfoContentCopy->draft);
+            unset($widgetInfoContentCopy->installed);
+            $this->utilityService->filePutContent($widgetPath . '/info.json', json_encode($widgetInfoContentCopy, JSON_PRETTY_PRINT));
+        } catch (IOException | \Exception $e) {
+            throw new HttpException(Response::HTTP_BAD_REQUEST, $e->getMessage(), $e);
+        } finally {
+            $this->fileSystem->remove(self::WIDGET_TMP_PATH);
+        }
+
+        $widgetInfoContent->local = true; // added this flag to identify the development solution pack for workspace
+        return $this->saveWidgetInDB($widgetInfoContent, $widgetPath, 'Import');
+    }
+
+    public function revertWidget(Request $request, $id)
+    {
+        if (!$this->fsrVoter->isGranted("update.widgets")) {
+            throw new AccessDeniedException();
+        }
+
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        $widgetsFileSystem = new Filesystem();
+
+        /** @var Widget $widget */
+        $widget = $widgetRepository->find($id);
+
+        $widgetPath = self::WIDGET_PATH . $widget->getName() . '-' . $widget->getVersion();
+        $widgetDevelopmentPath = self::WIDGET_DEVELOPMENT_PATH . $widget->getName() . '-' . $widget->getVersion();
+
+        $widgetUpdateData = array('enablePublish' => 0);
+
+        if ($widget && $widgetsFileSystem->exists($widgetPath)) {
+            try {
+                $this->utilityService->removeWidgetDir($widgetDevelopmentPath);
+                $this->utilityService->copyWidgetFiles($widgetPath, $widgetDevelopmentPath, $widget->getName(), $widget->getVersion(), false);
+            } catch (BadRequestHttpException | \Exception $e) {
+                throw new HttpException(Response::HTTP_BAD_REQUEST, $e->getMessage(), $e);
+            }
+        }
+        return $this->updateWidget($widgetUpdateData, $id, $widgetDevelopmentPath);
+    }
+
+    public function exportWidget(Request $request, $id)
+    {
+        if (!($this->fsrVoter->isGranted("read.widgets") || $this->fsrVoter->isGranted("execute.widgets"))) {
+            throw new AccessDeniedException();
+        }
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+
+        /** @var Widget $widget */
+        $widget = $widgetRepository->find($id);
+
+        $requestBody = json_decode($request->getContent());
+        $development = $requestBody->development ?? false;
+
+        if ($widget) {
+            try {
+                $widgetFileName = $widget->getName() . '-' . $widget->getVersion();
+                $widgetFolderPath = $development ? (self::WIDGET_DEVELOPMENT_PATH . $widgetFileName) : (self::WIDGET_PATH . $widgetFileName);
+                $widgetTmpFolderPath = sprintf('%s/%s/%s', self::WIDGET_TMP_PATH, $widgetFileName, $widgetFileName);
+                $this->fileSystem = new Filesystem();
+                $this->fileSystem->mkdir($widgetTmpFolderPath);
+                $this->utilityService->copyWidgetFiles($widgetFolderPath, $widgetTmpFolderPath, $widget->getName(), $widget->getVersion(),  !$development);
+
+                $widgetTgz = sprintf("%s/%s.tar", $widgetTmpFolderPath, $widgetFileName);
+                $widgetTgzGz = sprintf("%s/%s.tar.gz", $widgetTmpFolderPath, $widgetFileName);
+                $infoContent = json_decode(file_get_contents($widgetFolderPath . '/info.json'), true);
+                $infoContent['development'] = $development;
+                $this->utilityService->filePutContent($widgetTmpFolderPath . '/info.json', json_encode($infoContent, JSON_PRETTY_PRINT));
+
+                $phar = new \PharData($widgetTgz);
+                $phar->buildFromDirectory(sprintf('%s/%s', self::WIDGET_TMP_PATH, $widgetFileName));
+                $phar->compress(\Phar::GZ);
+                $tgzFileData = file_get_contents($widgetTgzGz);
+                $tgzFileSize = filesize($widgetTgzGz);
+            } catch (IOException | \Exception $e) {
+                $this->logger->error($e->getMessage());
+            } finally {
+                $this->fileSystem->remove(self::WIDGET_TMP_PATH);
+            }
+
+            $response = new Response();
+            $response->headers->set('Content-Type', 'application/gzip');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . $widgetFileName . '.tgz' . '"');
+            $response->headers->set('filename', $widgetFileName . '.tgz');
+            $response->headers->set('Content-Length', $tgzFileSize);
+            $response->setContent($tgzFileData);
+
+            return $response;
+        }
+        return new Response('Requested widget not found.', Response::HTTP_NOT_FOUND);
+    }
+
+    public function listInstalledWidgets(Request $request)
+    {
+
+        if ($this->fsrVoter->isGranted("read.widgets") || $this->fsrVoter->isGranted("execute.widgets")) {
+
+
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $widgetRepository = $entityManager->getRepository(Widget::class);
+
+            $serializer = $this->container->get('serializer');
+            $customContent = [];
+
+            /** @var Widget $widget */
+            $widget = $widgetRepository->findBy(["installed" => true]);
+
+            foreach ($widget as $w) {
+                $normalizedWidgetData = $serializer->normalize($w, 'jsonld');
+                $normalizedWidgetData['systemWidget'] = in_array($normalizedWidgetData['name'] . '-' . $normalizedWidgetData['version'], $this->systemWidgetNames) ? true : false;
+                array_push($customContent, $normalizedWidgetData);
+            }
+
+            $request->attributes->set('_api_collection_operation_name', 'get');
+            $request->attributes->set('_api_item_operation_name', 'get');
+            $request->attributes->set('_api_resource_class', Widget::class);
+            $request->attributes->set('_format', 'jsonld');
+            $request->overrideGlobals();
+            $data = ['@type' => 'hydra:Collection', 'hydra:member' => $customContent, 'hydra:totalItems' => sizeof($customContent)];
+            return new JsonResponse($data, Response::HTTP_OK);
+        } else {
+            throw new AccessDeniedException();
+        }
+    }
+
+    // To be retired if not used
+    public function listWidget(Request $request)
+    {
+        if ($this->fsrVoter->isGranted("read.widgets") || $this->fsrVoter->isGranted("execute.widgets")) {
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $widgetRepository = $entityManager->getRepository(Widget::class);
+
+            /** @var Widget $widget */
+            $queryParams = $request->query->all();
+            unset($queryParams['$__selectFields']);
+            unset($queryParams['$asJson']);
+            unset($queryParams['$relationships']);
+            unset($queryParams['$groups']);
+            unset($queryParams['$export']);
+            unset($queryParams['$limit']);
+            unset($queryParams['$page']);
+            $widget = $widgetRepository->findBy($queryParams);
+
+            $request->attributes->set('_api_collection_operation_name', 'get');
+            $request->attributes->set('_api_item_operation_name', 'get');
+            $request->attributes->set('_api_resource_class', Widget::class);
+            $request->attributes->set('_format', 'jsonld');
+            $request->overrideGlobals();
+            return $widget;
+        } else {
+            throw new AccessDeniedException();
+        }
+    }
+
+    protected function getDevelopmentWidgetData($widget)
+    {
+        $widgetData = json_decode(file_get_contents(self::WIDGET_DEVELOPMENT_PATH . $widget->getName() . '-' . $widget->getVersion() . '/info.json'), true);
+        $widgetData['draft'] = $widget->getDraft();
+        $widgetData['installed'] = $widget->getInstalled();
+        $widgetData['enablePublish'] = $widget->getEnablePublish();
+        $widgetData['@id'] = '/api/3/widgets/' . $widget->getUuid();
+        $widgetData['systemWidget'] = in_array($widget->getName() . '-' . $widget->getVersion(), $this->systemWidgetNames) ? true : false;
+
+        return $widgetData;
+    }
+
+    public function developmentWidgets(Request $request, $uuid)
+    {
+        if ($this->fsrVoter->isGranted("read.widgets") || $this->fsrVoter->isGranted("execute.widgets")) {
+            $customResponse = [];
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $widgetRepository = $entityManager->getRepository(Widget::class);
+            if (!$uuid) {
+                /** @var Widget $widget */
+                $widget = $widgetRepository->findBy(array("draft" => 1));
+
+                foreach ($widget as $wid) {
+                    array_push($customResponse, $this->getDevelopmentWidgetData($wid));
+                }
+            } else {
+                /** @var Widget $widget */
+                $widget = $widgetRepository->find($uuid);
+                $widgetData = $this->getDevelopmentWidgetData($widget);
+                $widgetData['tree'] = $this->buildMenu(self::WIDGET_DEVELOPMENT_PATH . $widget->getName() . '-' . $widget->getVersion());
+                array_push($customResponse, $widgetData);
+            }
+            $data = ['@type' => 'hydra:Collection', 'hydra:member' => $customResponse, 'hydra:totalItems' => sizeof($customResponse)];
+            return new JsonResponse($data, Response::HTTP_OK);
+        } else {
+            throw new AccessDeniedException();
+        }
+    }
+
+    public function widgetClone(Request $request)
+    {
+        if (!$this->fsrVoter->isGranted("create.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $requestBody = json_decode($request->getContent());
+
+        $forkedFromName = explode('-', $requestBody->forkedFrom)[0];
+        $forkedFromVersion = explode('-', $requestBody->forkedFrom)[1];
+        $forkedFromVersionString = str_replace('.', '', $forkedFromVersion);
+
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        /** @var Widget $widget */
+        $widgetForkedFrom = $widgetRepository->findOneBy(array("name" => $forkedFromName, "version" => $forkedFromVersion));
+
+        if ($this->widgetExistingCheck($requestBody->name, $requestBody->version)) {
+            return new Response(sprintf(self::WIDGETDUPLICATEMESSAGE, $requestBody->name, $requestBody->version), Response::HTTP_CONFLICT);
+        }
+
+        if ($widgetForkedFrom) {
+            $widgetForkedFromPath = (($requestBody->widgetPath == 'development') ? self::WIDGET_DEVELOPMENT_PATH : self::WIDGET_PATH) . $forkedFromName . '-' . $forkedFromVersion;
+            $widgetPath = self::WIDGET_DEVELOPMENT_PATH . $requestBody->name . '-' . $requestBody->version;
+
+            $widgetCloneData = array(
+                'name' => $requestBody->name,
+                'version' => $requestBody->version,
+                'title' => $requestBody->title,
+                'subTitle' => $requestBody->subTitle,
+                'metadata' => $widgetForkedFrom->getMetadata()
+            );
+
+            try {
+                $this->utilityService->copyWidgetFiles($widgetForkedFromPath, $widgetPath, $requestBody->name, $requestBody->version, false);
+
+                $widgetVersionString = str_replace('.', '', $requestBody->version);
+                $editControllerMatchString = 'edit' . ucfirst($forkedFromName) . $forkedFromVersionString . ($requestBody->widgetPath == 'development' ? 'DevCtrl' : 'Ctrl');
+                $editControllerReplaceString = 'edit' . ucfirst($requestBody->name) . $widgetVersionString . 'DevCtrl';
+                $editControllerFilePath = $widgetPath . '/edit.controller.js';
+
+                $viewControllerMatchString = $forkedFromName . $forkedFromVersionString . ($requestBody->widgetPath == 'development' ? 'DevCtrl' : 'Ctrl');
+                $viewControllerReplaceString = $requestBody->name . $widgetVersionString . 'DevCtrl';
+                $viewControllerFilePath = $widgetPath . '/view.controller.js';
+                if ($requestBody->widgetPath === 'development') {
+                    $sourcePath = "widgets/installed/";
+                    $destinationPath = "widgets/development/";
+                } else {
+                    $sourcePath = "widgets/development/";
+                    $destinationPath = "widgets/installed/";
+                }
+                // Update controller names when cloned from installed widgets
+                $this->utilityService->filePutContent($editControllerFilePath, str_replace($editControllerMatchString, $editControllerReplaceString, file_get_contents($editControllerFilePath)));
+                $this->utilityService->filePutContent($viewControllerFilePath, str_replace($viewControllerMatchString, $viewControllerReplaceString, file_get_contents($viewControllerFilePath)));
+
+                // Update templateUrl paths included in controllers
+                $this->utilityService->filePutContent($editControllerFilePath, str_replace($sourcePath, $destinationPath, file_get_contents($editControllerFilePath)));
+                $this->utilityService->filePutContent($viewControllerFilePath, str_replace($sourcePath, $destinationPath, file_get_contents($viewControllerFilePath)));
+
+                $this->utilityService->filePutContent($widgetPath . '/info.json', json_encode($widgetCloneData, JSON_PRETTY_PRINT));
+                $widgetCloneData['draft'] = true;
+                $widgetCloneData['installed'] = false;
+                $widgetCloneData['enablePublish'] = true;
+                $widgetCloneData['local'] = $requestBody->local;
+                return $this->saveWidgetInDB(json_decode(json_encode($widgetCloneData)), $widgetPath, 'Clone');
+            } catch (IOExceptionInterface | \Exception $e) {
+                $this->utilityService->removeWidgetDir($widgetPath);
+                return new Response($e->getMessage(), Response::HTTP_BAD_REQUEST);
+            }
+        }
+    }
+
+    protected function isImageFile($filePath)
+    {
+        $imgFileExt =  ['png', 'jpg', 'jpeg', 'tiff', 'bmp', 'gif'];
+        $filePathParts = pathinfo($filePath);
+        $fileExt = $filePathParts['extension'];
+
+        if (in_array($fileExt, $imgFileExt)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function createWidgetFile($filePath, $fileContent)
+    {
+
+        $filePathArray = explode('/', $filePath);
+        array_pop($filePathArray);
+        $dirPath = implode('/', $filePathArray);
+
+        if (!file_exists($dirPath)) {
+            mkdir($dirPath);
+        }
+
+        if ($this->isImageFile($filePath)) {
+            $img = preg_replace('#^data:image/[^;]+;base64,#', '$2', $fileContent);
+            $data = base64_decode($img);
+            $file = fopen($filePath, "wb+");
+            fwrite($file, $data);
+        } else {
+            $file = fopen($filePath, "w");
+            fwrite($file, $fileContent);
+        }
+        fclose($file);
+    }
+
+    protected function adjustPath($path)
+    {
+        $pathArray = explode('/', $path);
+        $adjustPathArray = array_slice($pathArray, 5);
+
+        return '/' . substr(implode('/', $adjustPathArray), 0);
+    }
+
+    protected function fileObject($filePath)
+    {
+        $fileInfo = pathinfo($filePath);
+        $fileExt = $this->isImageFile($filePath) ? 'image/' . $fileInfo['extension'] : $fileInfo['extension'];
+        return array(
+            'name' => $fileInfo['basename'],
+            'type' => $fileExt,
+            'xpath' => $this->adjustPath($fileInfo['dirname']) . '/' . $fileInfo['basename'],
+        );
+    }
+
+    protected function folderObject($folderPath)
+    {
+        $folderInfo = pathinfo($folderPath);
+        return array(
+            'name' => $folderInfo['basename'],
+            'type' => 'folder',
+            'xpath' => $this->adjustPath($folderInfo['dirname']) . '/' . $folderInfo['basename'],
+            'files' => array()
+        );
+    }
+
+    protected function addToMenu($dir)
+    {
+        $dirPathArray = explode('/', $dir);
+        if (count($dirPathArray) === 5) {
+            $result = array(
+                'info.json' => array(),
+                'view.html' => array(),
+                'view.controller.js' => array(),
+                'edit.html' => array(),
+                'edit.controller.js' => array()
+            );
+        } else {
+            $result = [];
+        }
+        $cdir = scandir($dir);
+
+        foreach ($cdir as $key => $value) {
+            if (!in_array($value, array(".", ".."))) {
+                if (is_dir($dir . DIRECTORY_SEPARATOR . $value)) {
+                    $result[$value] = $this->folderObject($dir . DIRECTORY_SEPARATOR . $value);
+                    $result[$value]['files'] = $this->addToMenu($dir . DIRECTORY_SEPARATOR . $value);
+                } else {
+                    $result[$value] = $this->fileObject($dir . DIRECTORY_SEPARATOR . $value);
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    protected function buildMenu($folderPath)
+    {
+        $folderInfo = pathinfo($folderPath);
+        $menu = array(
+            'name' => $folderInfo['basename'],
+            'primaryFolder' => True,
+            'open' => True,
+            'setting' => True,
+            'type' => 'folder',
+            'files' => $this->addToMenu($folderPath)
+        );
+
+        $orderArray = array(
+            'info.json' => '',
+            'view.html' => '',
+            'edit.html' => '',
+            'view.controller.js' => '',
+            'edit.controller.js' => ''
+        );
+        if (array_key_exists('images', $menu['files'])) {
+            $orderArray['images'] = '';
+        }
+        if (array_key_exists('widgetAssets', $menu['files'])) {
+            $orderArray['widgetAssets'] = '';
+        }
+        $menu['files'] = array_replace($orderArray, $menu['files']);
+
+        return array(
+            $folderInfo['basename'] => $menu
+        );
+    }
+
+    protected function buildFilePathList($folderPath, &$results = array())
+    {
+        $files = scandir($folderPath);
+        $reservedExt = array('html', 'json');
+        foreach ($files as $key => $value) {
+            $path = realpath($folderPath . DIRECTORY_SEPARATOR . $value);
+            if (is_array(pathinfo($path)) && array_key_exists('extension', pathinfo($path))) {
+                $fileExt = pathinfo($path)['extension'];
+            }
+            if (!is_dir($path)) {
+                if (!in_array($fileExt, $reservedExt)) {
+                    $filePathArray = explode('/', $path);
+                    $filePathArraySplice = array_slice($filePathArray, 3);
+                    $results[] = implode('/', $filePathArraySplice);
+                }
+            } else if ($value != '.' && $value != '..') {
+                $this->buildFilePathList($path, $results);
+            }
+        }
+
+        return $results;
+    }
+
+    protected function findWidgetById($uuid)
+    {
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        $widget = $widgetRepository->find($uuid);
+
+        $serializer = $this->container->get('serializer');
+        return $serializer->normalize($widget, 'jsonld', ['ignore_authorization' => true, 'ignore_field_authorization' => true]);
+    }
+
+    protected function buildWidgetFilesFromTemplate($templatePath, $widgetFolderPath, $widgetName, $widgetVersion)
+    {
+        $versionString = str_replace('.', '', $widgetVersion);
+        $viewCtrlReplaceStr = $widgetName . $versionString . 'DevCtrl';
+        $editCtrlReplaceStr = 'edit' . ucfirst($widgetName) . $versionString  . 'DevCtrl';
+        $viewCtrlContent = preg_replace('/viewTemplateCtrl/', $viewCtrlReplaceStr, file_get_contents($templatePath . 'view.controller.js'));
+        $editCtrlContent = preg_replace('/editTemplateCtrl/', $editCtrlReplaceStr, file_get_contents($templatePath . 'edit.controller.js'));
+        $viewHtmlContent = file_get_contents($templatePath . 'view.html');
+        $editHtmlContent = file_get_contents($templatePath . 'edit.html');
+
+        $this->createWidgetFile($widgetFolderPath . '/view.html', $viewHtmlContent);
+        $this->createWidgetFile($widgetFolderPath . '/edit.html', $editHtmlContent);
+        $this->createWidgetFile($widgetFolderPath . '/view.controller.js', $viewCtrlContent);
+        $this->createWidgetFile($widgetFolderPath . '/edit.controller.js', $editCtrlContent);
+    }
+
+    protected function saveWidgetInDB($widgetData, $widgetPath, string $operation)
+    {
+        try {
+            $widget = new Widget();
+            $widget->setName($widgetData->name); // add a fromJSON construct method in widget.phps
+
+            if ($widgetData->title) {
+                $widget->setLabel($widgetData->title);  // add a fromJSON construct method in widget.phps
+                $widget->setTitle($widgetData->title);
+            }
+            if (property_exists($widgetData, 'label') && $widgetData->label) {
+                $widget->setLabel($widgetData->label);  // add a fromJSON construct method in widget.phps
+            }
+            $widget->setSubTitle($widgetData->subTitle);
+            $widget->setVersion($widgetData->version);
+            $widget->setMetadata((array) $widgetData->metadata);
+            $widget->setDraft($widgetData->draft);
+            $widget->setInstalled($widgetData->installed);
+            if (property_exists($widgetData, 'enablePublish')) {
+                $widget->setEnablePublish($widgetData->enablePublish);
+            }
+            if (property_exists($widgetData, 'metadata') && isset($widgetData->metadata)) {
+                $metadata_array = (array)$widgetData->metadata;
+                $categories = $this->solutionpackUtilityService->prepareCategoryData($metadata_array['category']);
+                if (!empty($categories)) {
+                    foreach ($categories as $category) {
+                        $picklistObject = $this->iriConverter->getItemFromIri($category, ['fetch_data' => false]);
+                        $widget->addCategory($picklistObject);
+                    }
+                }
+            }
+            if ($widgetData->importedBy) {
+                $widget->setImportedBy($widgetData->importedBy);
+            }
+            /** @var EntityManager $entityManager */
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $entityManager->persist($widget);
+            $entityManager->flush();
+
+            $serializer = $this->container->get('serializer');
+            $normalizedWidgetData = $serializer->normalize($widget, 'jsonld');
+
+            // Build folder directory
+            $normalizedWidgetData['tree'] = $this->buildMenu($widgetPath);
+            if (property_exists($widgetData, 'local')) {
+                $normalizedWidgetData['local'] = $widgetData->local;
+            }
+
+            $this->sendWidgetCUDRequestMessage($normalizedWidgetData);
+            $this->sendWidgetCUDRequestMessage($normalizedWidgetData, $operation, 'cyops.crudhub.datanotify');
+            return new Response(json_encode($normalizedWidgetData));
+        } catch (UniqueConstraintViolationException $e) {
+            return new Response($e->getMessage(), Response::HTTP_CONFLICT);
+        } catch (BadRequestHttpException $e) {
+            $this->utilityService->removeWidgetDir($widgetPath);
+            return new Response($e->getMessage(), Response::HTTP_BAD_REQUEST);
+        } finally {
+            $this->utilityService->syncHANodes($widgetPath, 'copy');
+        }
+    }
+
+    protected function unzipWidgetFile($tgzFileData, $widgetName, $widgetFolderPath)
+    {
+$logger->info('unzipWidgetFile function input data tgzFileData ===',$tgzFileData);
+        $logger->info('unzipWidgetFile function input data widgetName ===',$widgetName);
+        $logger->info('unzipWidgetFile function input data widgetFolderPath ===',$widgetFolderPath);
+        $archiveFolderName = '';
+        try {
+            $this->fileSystem = new Filesystem();
+            if (!file_exists($widgetFolderPath)) {
+$logger->info('make Folder!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+                mkdir($widgetFolderPath);
+            }
+            $widgetTgzPath = sprintf('%s%s.tgz', $widgetFolderPath, $widgetName);
+$logger->info('widgetTgzPath',$widgetTgzPath);
+            $this->utilityService->checkFileDumpPath($widgetTgzPath, $widgetFolderPath);
+$logger->info('unzipWidgetFile function checkFileDumpPath pass');
+            $this->fileSystem->dumpFile($widgetTgzPath, $tgzFileData);
+$logger->info('unzipWidgetFile function input data phar1 ===',$phar);
+            $phar = new \PharData($widgetTgzPath);
+$logger->info('unzipWidgetFile function input data phar2 ===',$phar);
+            $phar->decompress();
+$logger->info('unzipWidgetFile function input data phar3 ===',$phar);
+            $phar->extractTo($widgetFolderPath);
+$logger->info('unzipWidgetFile function input data phar4 ===',$phar);
+            $archiveFolderName = $phar->getFilename();
+        } catch (BadRequestHttpException | \Exception $e) {
+            $logger->info('unzipWidgetFile function error!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+            throw new HttpException(Response::HTTP_BAD_REQUEST, $e->getMessage(), $e);
+        } finally {
+            $this->removeTarFiles($widgetFolderPath, $widgetName);
+$logger->info('unzipWidgetFile function input return archiveFolderName ===',$archiveFolderName);
+            return $archiveFolderName;
+        }
+    }
+
+    protected function removeTarFiles($path, $name)
+    {
+        $filePaths = [sprintf('%s/%s.tar.gz', $path, $name), sprintf('%s/%s.tgz', $path, $name), sprintf('%s/%s.tar', $path, $name)];
+        foreach ($filePaths as $key => $value) {
+            if ($this->fileSystem->exists($value)) {
+                $this->fileSystem->remove($value);
+            }
+        }
+    }
+
+    private function sendWidgetCUDRequestMessage(array $data, $operation = 'Install', $key = 'key.api.notify')
+    {
+        $message = [];
+        if ($key == 'cyops.crudhub.datanotify') {
+            $deltaData = [];
+            $deltaData['oldData'] = [];
+            $deltaData['newData'] = $data;
+            $sourceIp = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'localhost';
+            $message = [
+                AppConstants::COMPONENT => 'crudhub',
+                AppConstants::ENTITY_TYPE => 'Widget',
+                AppConstants::ENTITY_UUID => $data['uuid'],
+                AppConstants::OPERATION => $operation,
+                AppConstants::USER_UUID => $data['modifyUser']['uuid'],
+                AppConstants::USER => array_key_exists('firstname', $data['modifyUser']) ? $data['modifyUser']['firstname'] . " " . $data['modifyUser']['lastname'] : $data['modifyUser']['name'],
+                AppConstants::TRANSACTION_DATE => (int)($_SERVER['REQUEST_TIME_FLOAT'] * 1000),
+                AppConstants::DELTA_DATA => $deltaData,
+                AppConstants::REMOTE_ADDR => $sourceIp
+            ];
+        } else {
+            $message = [
+                "data" => $data,
+                "operation" => $operation,
+                "entityType" => "Widget",
+                "entitySingularName" => "widget"
+            ];
+        }
+        $this->containers->get('old_sound_rabbit_mq.cyops_crud_auditing_producer')->setContentType('application/json');
+        $this->containers->get('old_sound_rabbit_mq.cyops_crud_auditing_producer')->publish(json_encode([$message]), $key);
+    }
+
+    protected function validateWidgetInput($widgetData)
+    {
+        // Name - Only alphanumeric is allowed
+        if (!preg_match('/^[a-zA-Z]+[a-zA-Z0-9._]+$/', $widgetData->name)) {
+            throw new BadRequestHttpException("Widget name must contain only alphanumeric characters");
+        }
+
+        // Versions - Example 7.2.1, 1.0.0 and not 7.2 or 1.0
+        if ($widgetData->version && !preg_match('/^\d+\.\d+\.\d+$/', $widgetData->version)) {
+            throw new BadRequestHttpException("Incorrect version number. Version should be in the format x.y.z");
+        }
+
+        // Compatible Pages (Pages on which the widget would be visible) - Only text value allowed
+        if ($widgetData->metadata->pages) {
+            foreach ($widgetData->metadata->pages as $page) {
+                if (!preg_match('/^[a-zA-Z ]+$/', $page)) {
+                    throw new BadRequestHttpException("Widget applicable pages must contain only text value.");
+                }
+            }
+        }
+
+        // Compatibility (Platform Version) - Only text or version similar value allowed
+        if ($widgetData->metadata->compatibility) {
+            foreach ($widgetData->metadata->compatibility as $c) {
+                $valid = preg_match('/^[a-zA-Z]+$/', $c) || preg_match('/^\d+\.\d+\.\d+$/', $c) ? true : false;
+                if (!$valid) {
+                    throw new BadRequestHttpException("Widget compatibility must contain only text value or version number");
+                }
+            }
+        }
+
+        // Certified - Only Yes or No allowed
+        if ($widgetData->metadata->certified) {
+            $certified = strtolower($widgetData->metadata->certified);
+            $valid = $certified == "yes" || $certified == "no" ? true : false;
+            if (!$valid) {
+                throw new BadRequestHttpException("The 'certified' key can have only a 'yes' or a 'no' value.");
+            }
+        }
+    }
+
+    public function widgetDetails(Request $request)
+    {
+        if (!$this->fsrVoter->isGranted("read.widgets")) {
+            throw new AccessDeniedException();
+        }
+        $requestBody = json_decode($request->getContent());
+        $name = $requestBody->name ?? null;
+        $version = $requestBody->version ?? null;
+        $installed = $requestBody->installed ?? false;
+
+        if (!$name) {
+            throw new BadRequestHttpException('Widget name is required.');
+        }
+        $widget = null;
+        if (!$version) {
+            $widget = $this->getLatestWidget($name, $installed);
+        } else {
+            /** @var EntityManager $entityManager */
+            $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+            $widgetRepository = $entityManager->getRepository(Widget::class);
+            $widget = $widgetRepository->findOneBy(
+                array(
+                    'name' => $name,
+                    'version' => $version,
+                    'installed' => $installed
+                )
+            );
+            if (!$widget) {
+                $widget = $this->getLatestWidget($name, $installed);
+            }
+        }
+
+        if ($widget != null) {
+            $serializer = $this->container->get('serializer');
+            $normalizedWidgetData = [$serializer->normalize($widget, 'jsonld')];
+        } else {
+            $normalizedWidgetData = [];
+        }
+
+        $data = [
+            '@context' => '/api/3/contexts/Widget',
+            '@id' => '/api/3/widgets',
+            '@type' => 'hydra:Collection',
+            'hydra:member' => $normalizedWidgetData,
+            'hydra:totalItems' => sizeof($normalizedWidgetData)
+        ];
+        return new JsonResponse($data, Response::HTTP_OK);
+    }
+
+    protected function getLatestWidget($name, $installed)
+    {
+        /** @var EntityManager $entityManager */
+        $entityManager = $this->containers->get('doctrine')->getManagerForClass(Widget::class);
+        $widgetRepository = $entityManager->getRepository(Widget::class);
+        $latestWidget = $widgetRepository->findBy(['name' => $name, 'installed' => $installed], ['version' => 'desc']);
+        return $latestWidget[0];
+    }
+}
