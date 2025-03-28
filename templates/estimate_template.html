@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>견적서</title>
+  <style>
+    * {
+      font-family: sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .container {
+      width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .header {
+  position: relative;
+  height: 100px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #999;
+  padding-bottom: 20px;
+}
+
+/* 견적서 = 항상 container 기준 정중앙! */
+.header-title {
+  position: absolute;
+  top: 50%;
+  left: 50%; /* 브라우저 전체 X, container 기준 O */
+  transform: translate(-50%, -50%);
+  font-size: 28px;
+  font-weight: bold;
+  margin: 0;
+}
+
+/* 로고는 그냥 왼쪽 상단 고정 */
+.logo {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  height: 50px;
+}
+
+
+
+    .header-left {
+      display: flex;
+      align-items: center;
+    }
+    .header-left img {
+      height: 50px;
+      margin-right: 10px;
+    }
+
+    .header-date {
+      text-align: right;
+      font-size: 14px;
+      color: #333;
+      min-width: 120px;
+
+    }
+
+    .info-section {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      width: 100%;
+    }
+    .info-left {
+      width: 45%;
+      padding-right: 10px;
+      box-sizing: border-box;
+    }
+    .info-right {
+      width: 45%;
+      text-align: right;
+    }
+    .info-left p,
+    .info-right p {
+      margin: 4px 0;
+    }
+    .info-right .company {
+      font-weight: bold;
+    }
+
+    .estimate-title {
+      font-weight: bold;
+      margin: 10px 0;
+    }
+
+    /* 표(테이블) 스타일 */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+    }
+    table th,
+    table td {
+      border: 1px solid #999;
+      padding: 6px;
+      text-align: center;
+    }
+    table thead th {
+      background-color: #f5f5f5;
+    }
+
+    .price-table td {
+      text-align: right;
+    }
+    .price-table td:nth-child(1),
+    .price-table td:nth-child(2),
+    .price-table td:nth-child(3) {
+      text-align: left;
+    }
+
+    .totals {
+      margin: 10px 0;
+    }
+    .totals > div {
+      display: flex;
+      justify-content: flex-end;
+      margin: 5px 0;
+    }
+    .totals > div span {
+      width: 120px;
+      display: inline-block;
+    }
+
+    .notice-section {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+    .notice-left {
+      width: 60%;
+      padding-right: 10px;
+      box-sizing: border-box;
+    }
+    .notice-left ol {
+      margin: 0;
+      padding-left: 15px;
+    }
+    .notice-right {
+      width: 40%;
+    }
+
+    /* 구매자확인 테이블 */
+    .buyer-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 5px;
+    }
+    .buyer-table th,
+    .buyer-table td {
+      border: 1px solid #999;
+      padding: 6px;
+      vertical-align: middle;
+    }
+    .buyer-table th {
+      width: 100px;
+      background-color: #f5f5f5;
+      text-align: center;
+    }
+    .buyer-table td {
+      height: 36px;
+    }
+
+
+    .signature-overlay {
+  position: absolute;
+  bottom: -5px;  /* or top: 0 */
+  left: 46%;
+  height: 40px;
+  /*opacity: 0.9; 서명이 너무 진하지 않게*/
+  pointer-events: none; /* 클릭 방지 (PDF엔 상관없지만 습관적으로) */
+}
+  </style>
+</head>
+<body>
+<div class="container">
+
+    <div class="header">
+        {% if include_logo %}
+          <img src="{{ logo_path }}" class="logo" />
+        {% endif %}
+        <div class="header-title">견 적 서</div>
+      </div>
+
+  <!-- 귀중/프로젝트명/회사 정보 영역 -->
+  <div class="header-date">{{ date }}</div> <!-- 2025년 02월 27일 견적서 작성일자-->
+
+  <!-- info-section: 좌우 테이블 나란히 정렬 -->
+  <table style="width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 10px;">
+    <tr>
+      <!-- 왼쪽: 참조 정보 -->
+      <td style="width: 50%; vertical-align: top; text-align: left; border: none;">
+
+        <table style="width: 100%; border-collapse: collapse; border: none;">
+          <tr>
+            <td style="text-align: left; padding: 4px; border: none;" colspan="2"><strong><u>(주) {{ cust_name }}</u></strong></td>
+          </tr>
+          <tr>
+            <td style="text-align: left; padding: 4px; border: none; width: 80px;">참&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;조:</td>
+            <td style="text-align: left; padding: 4px; border: none;">{{ referrer }} 님</td>
+          </tr>
+          <tr>
+            <td style="text-align: left; padding: 4px; border: none;">프로젝트명:</td>
+            <td style="text-align: left; padding: 4px; border: none;">{{ project_name }}</td>
+          </tr>
+        </table>
+
+        <p>아래와 같이 견적합니다.</p>
+      </td>
+
+      <!-- 오른쪽: 주식회사 정보 -->
+      <td style="width: 27%; vertical-align: top; text-align: left; border: none;">
+        <table style="width: 100%; border-collapse: collapse; border: none;">
+          <tr>
+            <td style="padding: 4px; border: none;"><strong>주식회사</strong></td>
+            <td style="padding: 4px; border: none; text-align: left;"><strong>이츠인 (사업자등록번호: 113-86-71237)</strong></td>
+          </tr>
+          <tr>
+            <td style="padding: 4px; border: none;"><strong>대표이사</strong></td>
+            <td style="padding: 4px; border: none; text-align: left;">정장호, 김일균</td>
+          </tr>
+          <tr>
+            <td style="padding: 4px; border: none;"><strong>주소</strong></td>
+            <td style="padding: 4px; border: none; text-align: left;">
+              <div>서울시 금천구 가산디지털1로196,</div>
+              <div>에이스테크노타워10차 302호</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 4px; border: none;"><strong>대표번호</strong></td>
+            <td style="padding: 4px; border: none; text-align: left;">02-2038-4874</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+
+  <!-- 일금영원정 (VAT포함) 문구 -->
+  <p class="estimate-title">{{ total_price_korean }} (VAT 포함)</p>
+
+  <!-- 품목 테이블 -->
+
+
+  <!-- 합계, 부가세, 총합계 -->
+  <table class="price-table" style="border-collapse: collapse; width: 100%;">
+    <thead>
+    <tr>
+      <th style="width: 50px;">구분</th>
+      <th style="width: 100px;">품명</th>
+      <th style="width: 180px;">내역</th>
+      <th style="width: 50px;">수량</th>
+      <th style="width: 80px;">소비자단가</th>
+      <th style="width: 80px;">공급단가</th>
+      <th style="width: 100px;">공급가 합계</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>{{ item.name }}</td>
+      <td>{{ item.description }}</td>
+      <td>{{ item.quantity }}</td>
+      <td>{{ "{:,}".format(item.unit_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.supply_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.total_price | default(0) | int) }}</td>
+    </tr>
+    {% endfor %}
+
+    <!-- 합계 -->
+    <tr>
+      <td colspan="6" style="text-align: center; font-weight: bold;">합 계</td>
+      <td>₩{{ "{:,}".format(total_supply | default(0) | int) }}</td>
+    </tr>
+    <tr>
+      <td colspan="6" style="text-align: center; font-weight: bold;">부 가 세</td>
+      <td>₩{{ "{:,}".format(vat | default(0) | int) }}</td>
+    </tr>
+    <tr>
+      <td colspan="6" style="text-align: center; font-weight: bold;">총 합 계 (VAT포함)</td>
+      <td>₩{{ "{:,}".format(total_with_vat | default(0) | int) }}</td>
+    </tr>
+    </tbody>
+
+
+    <!-- 유의 사항 + 구매자확인 -->
+    <div class="notice-section">
+      <!-- 왼쪽: 유의사항 (1~6) -->
+
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.4; border: none;">
+        <!-- 1행 -->
+        <tr>
+          <td style="padding: 4px; width: 11%; text-align: left;">1.견적유효기간:</td>
+          <td style="padding: 4px; width: 41%; text-align: left;">견적 후 2주일</td>
+          <td style="text-align: center; border: 1px solid black;" colspan="2"><strong>구매자확인</strong></td>
+        </tr>
+
+        <!-- 2행 -->
+        <tr>
+          <td style="padding: 4px; text-align: left;">2.납&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;기:</td>
+          <td style="padding: 4px; text-align: left;">협의지정일</td>
+          <td colspan="2" style="padding: 4px; font-size: 12px; text-align: left;">
+            당사는 이 견적서상의 가격 및 조건들을 수용하고
+            이 견적서를 발주서로 대신합니다.
+          </td>
+        </tr>
+
+        <!-- 3행 -->
+        <tr>
+          <td style="padding: 4px; text-align: left;">3.결&nbsp;&nbsp;제&nbsp;&nbsp;조&nbsp;&nbsp;건:</td>
+          <td style="padding: 4px; text-align: left;">계산서 발행 후 30일</td>
+          <th style="padding: 4px; width: 15%;">회사명</th>
+          <td style="padding: 4px;"></td>
+        </tr>
+
+        <!-- 4행 -->
+        <tr>
+          <td style="padding: 4px; text-align: left;">4.하자보증기간:</td>
+          <td style="padding: 4px; text-align: left;">{{ part1 }}</td>
+          <th style="padding: 4px;">발주담당자</th>
+          <td style="padding: 4px;"></td>
+        </tr>
+
+        <!-- 5행 -->
+        <tr>
+          <td style="padding: 4px; text-align: left;">5.영&nbsp;&nbsp;업&nbsp;&nbsp;담&nbsp;&nbsp;당:</td>
+          <td style="padding: 4px; text-align: left;">정민섭 / 과장 / 010-8726-7448 / jms@itsin.co.kr</td>
+          <th style="padding: 4px;">배송주소지</th>
+          <td style="padding: 4px;"></td>
+        </tr>
+
+        <!-- 6행 -->
+        <tr>
+          <td style="padding: 4px; text-align: left;">6.특&nbsp;&nbsp;이&nbsp;&nbsp;사&nbsp;&nbsp;항:</td>
+          <td style="padding: 4px; text-align: left;">{{ part2 }}</td>
+          <th style="padding: 4px;">대표 / 신청인</th>
+          <td style="position: relative;">
+            <span>/ (인)</span>
+            {% if include_signature %}
+              <img src="{{ sign_path }}" class="signature-overlay" />
+            {% endif %}
+          </td>
+        </tr>
+      </table>
+
+    </div>
+
+</div>
+</body>
+</html>

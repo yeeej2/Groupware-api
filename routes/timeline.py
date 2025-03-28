@@ -17,9 +17,9 @@ def get_timeline(customer_id):
             t.description, 
             t.person, 
             t.amount, 
-            c.cust_name AS company
+            c.customer_nm AS company
         FROM timeline t
-        JOIN customer c ON t.cust_id = c.cust_id
+        JOIN customer c ON t.cust_id = c.customer_id
         WHERE t.cust_id = %s
         ORDER BY t.event_date DESC
         """
@@ -60,9 +60,9 @@ def add_timeline_entry():
         last_id = cursor.fetchone()["last_id"]
 
         cursor.execute("""
-            SELECT t.timeline_id, t.category, t.event_date, t.description, t.person, t.amount, c.cust_name AS company
+            SELECT t.timeline_id, t.category, t.event_date, t.description, t.person, t.amount, c.customer_nm AS company
             FROM timeline t
-            JOIN customer c ON t.cust_id = c.cust_id
+            JOIN customer c ON t.cust_id = c.customer_id
             WHERE t.timeline_id = %s
         """, (last_id,))
         new_entry = cursor.fetchone()

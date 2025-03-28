@@ -65,10 +65,10 @@ def list_contracts():
             c.amount,
             c.tax,
             c.total_amount,
-            cust.cust_name AS customer_name
+            cust.customer_nm AS customer_name
         FROM contract c
         LEFT JOIN customer cust 
-               ON c.customer_id = cust.cust_id
+               ON c.customer_id = cust.customer_id
         """
         where_clauses = []
         params = []
@@ -76,7 +76,7 @@ def list_contracts():
         # 3) 검색조건(WHERE) 동적 구성
         if search:
             # 계약명이나 고객명에 search 단어가 포함되는지
-            where_clauses.append("(c.contract_name LIKE %s OR cust.cust_name LIKE %s)")
+            where_clauses.append("(c.contract_name LIKE %s OR cust.customer_nm LIKE %s)")
             params.append(f"%{search}%")
             params.append(f"%{search}%")
         
@@ -309,7 +309,7 @@ def get_contract_detail(contract_id):
             # (1) 계약 정보 + 고객사명 + 견적명 JOIN
             sql_contract = """
                 SELECT
-                    cust.cust_name,
+                    cust.customer_nm,
                     CONCAT(e.quote_id, '(', e.quote_details, ')') AS quote_name,
                     DATE_FORMAT(c.contract_dt, '%%Y-%%m-%%d') AS contract_dt,
                     DATE_FORMAT(c.contract_start_dt, '%%Y-%%m-%%d') AS contract_start_dt,
@@ -317,7 +317,7 @@ def get_contract_detail(contract_id):
                     DATE_FORMAT(c.delivery_dt, '%%Y-%%m-%%d') AS delivery_dt,
                     c.*
                 FROM contract c
-                LEFT JOIN customer cust ON c.customer_id = cust.cust_id
+                LEFT JOIN customer cust ON c.customer_id = cust.customer_id
                 LEFT JOIN t_estimate e ON c.estimate_id = e.id
                 WHERE c.contract_id = %s
                 """

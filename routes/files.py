@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from models.database import get_db_connection
 import pdb  # Python Debugger
 import uuid
+from urllib.parse import quote
 
 # 📌 Blueprint 생성
 files_bp = Blueprint('files', __name__)
@@ -38,21 +39,18 @@ def upload_file():
     files = request.files.getlist('file')
     untyFileNo = request.form.get("untyFileNo")  # FormData에서 가져오기
 
-    logging.info("받아온 통합첨부파일==" + untyFileNo);
+    logging.info("받아온 통합첨부파일 == " + str(untyFileNo))
     max_file_seq = 1
-    isNew = False  #완저 새로운 파일인지 체크
+    isNew = False
     unty_file_no = None
 
-
-    # 📌 백엔드에서 UUID 생성
-    if not untyFileNo: # untyFileNo 있음
-        logging.info("untyFileNo 있음");
-        unty_file_no = untyFileNo
-        isNew = False
-    else: # untyFileNo 없음
-        logging.info("untyFileNo 없음");
+    if not untyFileNo or untyFileNo == "null":
+        logging.info("📌 새로운 untyFileNo 생성")
         unty_file_no = str(uuid.uuid4())
         isNew = True
+    else:
+        unty_file_no = untyFileNo
+        isNew = False
 
     if not files or len(files) == 0:
         logging.error("🚨 업로드된 파일이 없습니다.")
@@ -63,47 +61,49 @@ def upload_file():
             logging.error("🚨 선택된 파일의 이름이 없습니다.")
             return jsonify({"error": "Invalid file name"}), 400
 
-        # 📌 한글 파일명을 유지하면서 보안 처리
-        filename = custom_secure_filename(file.filename)
+        # 🔥 원본 파일명 저장용 (한글 포함됨)
+        original_name = file.filename
 
-        # 🔥 파일명이 비어 있지 않은지 확인
-        if not filename:
-            logging.error("🚨 파일명이 유효하지 않습니다.")
-            return jsonify({"error": "Invalid file name"}), 400
+        # 🔧 확장자 추출
+        _, ext = os.path.splitext(original_name)
+        if not ext:
+            logging.warning("❗ 확장자 없는 파일")
+            ext = ""  # 확장자 없는 파일도 허용
 
-        # 📌 파일 저장 경로 (디렉토리 + 파일명 포함!)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        # ✅ 안전한 UUID 기반 파일명 생성 (확장자 유지)
+        unique_filename = f"{str(uuid.uuid4())}{ext}"
+        file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
 
-        # 🔍 디버깅용 로그 (파일 저장 경로 확인)
-        logging.info(f"📁 저장할 파일 경로: {file_path}")
+        # 업로드 폴더 없으면 생성
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-        # 📌 디렉토리가 없으면 자동 생성
-        if not os.path.exists(UPLOAD_FOLDER):
-            logging.info(f"📂 업로드 폴더 생성: {UPLOAD_FOLDER}")
-            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-        # 📌 파일 저장 (파일명이 포함된 경로여야 함)
+        # 실제 파일 저장
         try:
             file.save(file_path)
+            logging.info(f"📁 저장 완료: {file_path}")
         except Exception as e:
             logging.error(f"🚨 파일 저장 중 오류 발생: {e}")
             return jsonify({"error": "File save failed", "details": str(e)}), 500
 
-        # 📌 DB에 파일 정보 저장
+        # DB에 파일 정보 저장
         conn = get_db_connection()
         cursor = conn.cursor()
-        if isNew: # 완전 새로운 파일
-            cursor.execute("INSERT INTO files (file_name, file_path, unty_file_no, file_seq) VALUES (%s, %s, %s, %s)", (filename, file_path, unty_file_no, max_file_seq))
-        else: # untyFileNo 없음
-            # 📌 같은 `unty_file_no` 그룹에서 가장 큰 `file_seq` 찾기
+        if isNew:
+            cursor.execute("""
+                INSERT INTO files (file_name, unique_file_name, file_path, unty_file_no, file_seq)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (original_name, unique_filename, file_path, unty_file_no, max_file_seq))
+        else:
             cursor.execute("SELECT COALESCE(MAX(file_seq), 1) FROM files WHERE unty_file_no = %s", (unty_file_no,))
             max_file_seq = cursor.fetchone()["COALESCE(MAX(file_seq), 1)"]
-            cursor.execute("INSERT INTO files (file_name, file_path, unty_file_no, file_seq) VALUES (%s, %s, %s, %s)", (filename, file_path, unty_file_no, max_file_seq))
-            
+            cursor.execute("""
+                INSERT INTO files (file_name, unique_file_name, file_path, unty_file_no, file_seq)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (original_name, unique_filename, file_path, unty_file_no, max_file_seq))
+
         conn.commit()
         conn.close()
-        max_file_seq = max_file_seq + 1
-        
+        max_file_seq += 1
 
     return jsonify({"message": "Files uploaded successfully", "untyFileNo": unty_file_no})
 
@@ -116,16 +116,25 @@ def upload_file():
 
 
 
-# 저장된 파일 리스트 조회 API
 @files_bp.route('/files/<untyfileno>', methods=['GET'])
 def get_files(untyfileno):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM files WHERE unty_file_no = %s", (untyfileno,))
+    cursor.execute("""
+        SELECT file_id, file_name, unique_file_name FROM files WHERE unty_file_no = %s
+    """, (untyfileno,))
     files = cursor.fetchall()
     conn.close()
-    file_list = [{"id": row["file_id"], "file_name": row["file_name"], "file_path": row["file_path"]} for row in files]
+
+    file_list = [
+        {
+            "id": row["file_id"],
+            "file_name": row["file_name"],
+            "unique_file_name": row["unique_file_name"]
+        } for row in files
+    ]
     return jsonify(file_list)
+
 
 
 
@@ -140,7 +149,7 @@ def download_files(untyFileNo):
     # 📌 DB에서 해당 `untyFileNo`에 해당하는 파일 목록 조회
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_name FROM files WHERE unty_file_no = %s", (untyFileNo,))
+    cursor.execute("SELECT file_id FROM files WHERE unty_file_no = %s", (untyFileNo,))
     files = cursor.fetchall()
     conn.close()
 
@@ -149,44 +158,94 @@ def download_files(untyFileNo):
         return jsonify({"error": "No files found for this untyFileNo" , "files": []}), 404
 
     # 📌 파일 목록을 JSON 응답으로 반환 (프론트엔드에서 개별 다운로드)
-    file_list = [file["file_name"] for file in files]
+    file_list = [file["file_id"] for file in files]
     return jsonify({"files": file_list})
 
-# 📌 개별 파일 다운로드 API
-@files_bp.route('/download/file/<filename>', methods=['GET'])
-def download_file(filename):
-    logging.info(f"📥 개별 파일 다운로드 요청: {filename}")
-
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    if not os.path.exists(file_path):
-        logging.error(f"🚨 파일이 존재하지 않음: {filename}")
-        return jsonify({"error": "File not found"}), 404  # ✅ JSON 응답 반환
-
-    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
 
 
+@files_bp.route('/download/file/<int:fileId>', methods=['GET'])
+def download_file(fileId):
+    logging.info(f"📥 개별 파일 다운로드 요청: {fileId}")
 
-
-
-# 📌 특정 파일 삭제 API
-@files_bp.route('/delete/<fileId>', methods=['DELETE'])
-def delete_file(fileId):
-    logging.info("fileId 해당 파일 삭제" + fileId)
-
-    # 파일 정보 조회
+    # DB 조회
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM files WHERE file_id = %s", (fileId,))
-    files = cursor.fetchall()
+    cursor.execute("""
+        SELECT file_name, unique_file_name FROM files WHERE file_id = %s
+    """, (fileId,))
+    file = cursor.fetchone()
     conn.close()
 
-    # 파일 정보 db에서 삭제
+    logging.info(f"📥 DB 조회 결과: {file}")
+
+    if not file:
+        logging.error(f"🚨 파일이 존재하지 않음: {fileId}")
+        return jsonify({"error": "File not found"}), 404
+
+    try:
+        # 파일이 실제 존재하는지 확인
+        file_path = os.path.join(UPLOAD_FOLDER, file["unique_file_name"])
+        if not os.path.exists(file_path):
+            logging.error("🚨 실제 파일이 서버에 존재하지 않음!")
+            return jsonify({"error": "Physical file not found"}), 404
+
+        original_name = file["file_name"] or "downloaded_file.xls"
+        response = send_from_directory(
+            UPLOAD_FOLDER,
+            file["unique_file_name"],
+            as_attachment=True,
+            mimetype="application/octet-stream"
+        )
+
+        # ❌ filename="..." 생략하고
+        # ✅ filename*=UTF-8''만 사용
+        cd_value = f"attachment; filename*=UTF-8''{quote(original_name)}"
+        response.headers["Content-Disposition"] = cd_value
+        return response
+
+    except Exception as e:
+        logging.exception("❌ 파일 다운로드 처리 중 예외 발생")
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+
+
+
+
+
+
+
+
+@files_bp.route('/delete/<int:fileId>', methods=['DELETE'])
+def delete_file(fileId):
+    logging.info(f"파일 삭제 요청: {fileId}")
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM files WHERE file_Id = %s", (fileId,))
+    cursor.execute("SELECT unique_file_name FROM files WHERE file_id = %s", (fileId,))
+    file = cursor.fetchone()
+
+    if not file:
+        conn.close()
+        return jsonify({"error": "File not found"}), 404
+
+    unique_file_name = file["unique_file_name"]
+    file_path = os.path.join(UPLOAD_FOLDER, unique_file_name)
+
+    # 실제 파일 삭제
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            logging.error(f"🚨 파일 삭제 중 오류 발생: {e}")
+            return jsonify({"error": "File deletion failed", "details": str(e)}), 500
+
+    # DB에서 삭제
+    cursor.execute("DELETE FROM files WHERE file_id = %s", (fileId,))
     conn.commit()
     conn.close()
+
     return jsonify({"message": f"{fileId} deleted successfully!"})
+
     
 
 
@@ -196,3 +255,86 @@ def delete_file(fileId):
 
     
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+@files_bp.route('/files/copy/<untyFileNo>', methods=['POST'])
+def copy_files(untyFileNo):
+    """
+    통합 첨부 파일 번호(untyFileNo)에 해당하는 파일들을 복사하고,
+    새로운 통합 첨부 파일 번호를 생성하여 반환하는 API
+    """
+    logging.info(f"📋 파일 복사 요청 - 통합첨부파일번호: {untyFileNo}")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # 1) 기존 untyFileNo에 해당하는 파일 목록 조회
+        cursor.execute("""
+            SELECT file_name, unique_file_name, file_path
+            FROM files
+            WHERE unty_file_no = %s
+        """, (untyFileNo,))
+        files = cursor.fetchall()
+
+        if not files:
+            logging.warning(f"⚠️ 해당 통합첨부파일번호({untyFileNo})에 대한 파일이 없습니다.")
+            return jsonify({"error": "No files found for this untyFileNo"}), 404
+
+        # 2) 새로운 통합 첨부 파일 번호 생성
+        new_unty_file_no = str(uuid.uuid4())
+        logging.info(f"📌 새로운 통합첨부파일번호 생성: {new_unty_file_no}")
+
+        # 3) 파일 복사 및 DB에 새로운 파일 정보 저장
+        for file in files:
+            original_name = file["file_name"]
+            unique_file_name = file["unique_file_name"]
+            original_file_path = file["file_path"]
+
+            # 새로운 파일명 생성
+            _, ext = os.path.splitext(unique_file_name)
+            new_unique_file_name = f"{str(uuid.uuid4())}{ext}"
+            new_file_path = os.path.join(UPLOAD_FOLDER, new_unique_file_name)
+
+            # 파일 복사
+            try:
+                with open(original_file_path, 'rb') as src_file:
+                    with open(new_file_path, 'wb') as dest_file:
+                        dest_file.write(src_file.read())
+                logging.info(f"📁 파일 복사 완료: {original_file_path} -> {new_file_path}")
+            except Exception as e:
+                logging.error(f"🚨 파일 복사 중 오류 발생: {e}")
+                return jsonify({"error": "File copy failed", "details": str(e)}), 500
+
+            # DB에 새로운 파일 정보 저장
+            cursor.execute("""
+                INSERT INTO files (file_name, unique_file_name, file_path, unty_file_no, file_seq)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (original_name, new_unique_file_name, new_file_path, new_unty_file_no, 1))  # file_seq는 1로 초기화
+
+        # DB 커밋
+        conn.commit()
+
+        # 4) 새로운 통합 첨부 파일 번호 반환
+        return jsonify({"message": "Files copied successfully", "new_untyFileNo": new_unty_file_no}), 200
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"🚨 파일 복사 처리 중 오류 발생: {e}")
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+    finally:
+        conn.close()
