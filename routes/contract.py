@@ -198,6 +198,9 @@ def create_contract():
     """
     data = request.get_json()
     conn = get_db_connection()
+    logging.info("data: %s", data);
+    logging.info("data.get('quantity'): %s", data.get('quantity'));
+
     logging.info("함수 시작");
     try:
         with conn.cursor() as cursor:
@@ -274,6 +277,8 @@ def create_contract():
                     'sales_cycle': p.get('sales_cycle'),
                     'memo': p.get('memo'),
                 }
+
+                logging.info("data.get('quantity'): %s", p.get('quantity'));
                 cursor.execute(sql_product, product_params)
 
             conn.commit()
@@ -310,7 +315,7 @@ def get_contract_detail(contract_id):
             sql_contract = """
                 SELECT
                     cust.customer_nm,
-                    CONCAT(e.quote_id, '(', e.quote_details, ')') AS quote_name,
+                    CONCAT(e.quote_id, '(', e.quote_title, ')') AS quote_name,
                     DATE_FORMAT(c.contract_dt, '%%Y-%%m-%%d') AS contract_dt,
                     DATE_FORMAT(c.contract_start_dt, '%%Y-%%m-%%d') AS contract_start_dt,
                     DATE_FORMAT(c.contract_end_dt, '%%Y-%%m-%%d') AS contract_end_dt,
@@ -318,7 +323,7 @@ def get_contract_detail(contract_id):
                     c.*
                 FROM contract c
                 LEFT JOIN customer cust ON c.customer_id = cust.customer_id
-                LEFT JOIN t_estimate e ON c.estimate_id = e.id
+                LEFT JOIN estimate e ON c.estimate_id = e.id
                 WHERE c.contract_id = %s
                 """
 

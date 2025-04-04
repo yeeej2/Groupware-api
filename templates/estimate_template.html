@@ -188,7 +188,7 @@
       </div>
 
   <!-- 귀중/프로젝트명/회사 정보 영역 -->
-  <div class="header-date">{{ date }}</div> <!-- 2025년 02월 27일 견적서 작성일자-->
+  <div class="header-date"><strong>{{ date }}</strong></div> <!-- 2025년 02월 27일 견적서 작성일자-->
 
   <!-- info-section: 좌우 테이블 나란히 정렬 -->
   <table style="width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 10px;">
@@ -198,15 +198,15 @@
 
         <table style="width: 100%; border-collapse: collapse; border: none;">
           <tr>
-            <td style="text-align: left; padding: 4px; border: none;" colspan="2"><strong><u>(주) {{ cust_name }}</u></strong></td>
+            <td style="text-align: left; padding: 4px; border: none;" colspan="2"><strong><u>(주) {{ estimate.customer_nm }}</u></strong></td>
           </tr>
           <tr>
             <td style="text-align: left; padding: 4px; border: none; width: 80px;">참&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;조:</td>
-            <td style="text-align: left; padding: 4px; border: none;">{{ referrer }} 님</td>
+            <td style="text-align: left; padding: 4px; border: none;">{{ aaa }} 님</td>
           </tr>
           <tr>
             <td style="text-align: left; padding: 4px; border: none;">프로젝트명:</td>
-            <td style="text-align: left; padding: 4px; border: none;">{{ project_name }}</td>
+            <td style="text-align: left; padding: 4px; border: none;">{{ estimate.quote_title }}</td>
           </tr>
         </table>
 
@@ -242,7 +242,7 @@
 
 
   <!-- 일금영원정 (VAT포함) 문구 -->
-  <p class="estimate-title">{{ total_price_korean }} (VAT 포함)</p>
+  <p class="estimate-title">금{{ total_price_korean }}정 (VAT 포함)</p>
 
   <!-- 품목 테이블 -->
 
@@ -264,28 +264,28 @@
     <tbody>
     {% for item in items %}
     <tr>
-      <td>{{ loop.index }}</td>
-      <td>{{ item.name }}</td>
-      <td>{{ item.description }}</td>
+      <td style="text-align: center;">{{ loop.index }}</td>
+      <td>{{ item.p_name }}</td>
+      <td>{{ item.p_description }}</td>
       <td>{{ item.quantity }}</td>
-      <td>{{ "{:,}".format(item.unit_price | default(0) | int) }}</td>
-      <td>{{ "{:,}".format(item.supply_price | default(0) | int) }}</td>
-      <td>{{ "{:,}".format(item.total_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.p_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.p_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.final_price | default(0) | int) }}</td>
     </tr>
     {% endfor %}
 
     <!-- 합계 -->
     <tr>
       <td colspan="6" style="text-align: center; font-weight: bold;">합 계</td>
-      <td>₩{{ "{:,}".format(total_supply | default(0) | int) }}</td>
+      <td style="text-align: center;">₩ {{ "{:,}".format(estimate.total_price_before_vat | default(0) | int) }}</td>
     </tr>
     <tr>
       <td colspan="6" style="text-align: center; font-weight: bold;">부 가 세</td>
-      <td>₩{{ "{:,}".format(vat | default(0) | int) }}</td>
+      <td style="text-align: center;">₩ {{ "{:,}".format(estimate.vat | default(0) | int) }}</td>
     </tr>
     <tr>
       <td colspan="6" style="text-align: center; font-weight: bold;">총 합 계 (VAT포함)</td>
-      <td>₩{{ "{:,}".format(total_with_vat | default(0) | int) }}</td>
+      <td style="text-align: center;">₩ {{ "{:,}".format(estimate.total_price_with_vat | default(0) | int) }}</td>
     </tr>
     </tbody>
 
@@ -297,15 +297,15 @@
       <table style="width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.4; border: none;">
         <!-- 1행 -->
         <tr>
-          <td style="padding: 4px; width: 11%; text-align: left;">1.견적유효기간:</td>
-          <td style="padding: 4px; width: 41%; text-align: left;">견적 후 2주일</td>
+          <td style="padding: 4px; width: 11%; text-align: left; border: none;">1.견적유효기간:</td>
+          <td style="padding: 4px; width: 41%; text-align: left; border: none;">{{estimate.valid_until}}</td>
           <td style="text-align: center; border: 1px solid black;" colspan="2"><strong>구매자확인</strong></td>
         </tr>
 
         <!-- 2행 -->
         <tr>
-          <td style="padding: 4px; text-align: left;">2.납&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;기:</td>
-          <td style="padding: 4px; text-align: left;">협의지정일</td>
+          <td style="padding: 4px; text-align: left; border: none;">2.납&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;기:</td>
+          <td style="padding: 4px; text-align: left; border: none;">{{estimate.delivery_condition}}</td>
           <td colspan="2" style="padding: 4px; font-size: 12px; text-align: left;">
             당사는 이 견적서상의 가격 및 조건들을 수용하고
             이 견적서를 발주서로 대신합니다.
@@ -314,32 +314,32 @@
 
         <!-- 3행 -->
         <tr>
-          <td style="padding: 4px; text-align: left;">3.결&nbsp;&nbsp;제&nbsp;&nbsp;조&nbsp;&nbsp;건:</td>
-          <td style="padding: 4px; text-align: left;">계산서 발행 후 30일</td>
+          <td style="padding: 4px; text-align: left; border: none;">3.결&nbsp;&nbsp;제&nbsp;&nbsp;조&nbsp;&nbsp;건:</td>
+          <td style="padding: 4px; text-align: left; border: none;">{{ estimate.payment_condition }}</td>
           <th style="padding: 4px; width: 15%;">회사명</th>
           <td style="padding: 4px;"></td>
         </tr>
 
         <!-- 4행 -->
         <tr>
-          <td style="padding: 4px; text-align: left;">4.하자보증기간:</td>
-          <td style="padding: 4px; text-align: left;">{{ part1 }}</td>
+          <td style="padding: 4px; text-align: left; border: none;">4.하자보증기간:</td>
+          <td style="padding: 4px; text-align: left; border: none;">{{ estimate.warranty_period }}</td>
           <th style="padding: 4px;">발주담당자</th>
           <td style="padding: 4px;"></td>
         </tr>
 
         <!-- 5행 -->
         <tr>
-          <td style="padding: 4px; text-align: left;">5.영&nbsp;&nbsp;업&nbsp;&nbsp;담&nbsp;&nbsp;당:</td>
-          <td style="padding: 4px; text-align: left;">정민섭 / 과장 / 010-8726-7448 / jms@itsin.co.kr</td>
+          <td style="padding: 4px; text-align: left; border: none;">5.영&nbsp;&nbsp;업&nbsp;&nbsp;담&nbsp;&nbsp;당:</td>
+          <td style="padding: 4px; text-align: left; border: none;">{{ estimate.name }} / {{ estimate.position }} / {{estimate.phone}} / {{estimate.email}}</td>
           <th style="padding: 4px;">배송주소지</th>
           <td style="padding: 4px;"></td>
         </tr>
 
         <!-- 6행 -->
         <tr>
-          <td style="padding: 4px; text-align: left;">6.특&nbsp;&nbsp;이&nbsp;&nbsp;사&nbsp;&nbsp;항:</td>
-          <td style="padding: 4px; text-align: left;">{{ part2 }}</td>
+          <td style="padding: 4px; text-align: left; border: none;">6.특&nbsp;&nbsp;이&nbsp;&nbsp;사&nbsp;&nbsp;항:</td>
+          <td style="padding: 4px; text-align: left; border: none;">{{ estimate.remarks }}</td>
           <th style="padding: 4px;">대표 / 신청인</th>
           <td style="position: relative;">
             <span>/ (인)</span>

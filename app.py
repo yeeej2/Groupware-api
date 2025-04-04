@@ -1,5 +1,6 @@
 # app.py
-from flask import Flask
+from flask import Flask, request
+import logging
 from flask_cors import CORS
 from extensions import mail
 from routes import register_blueprints  # ✅ mail이 분리됐으니 이건 ok
@@ -20,6 +21,43 @@ mail.init_app(app)
 
 # CORS
 CORS(app, expose_headers=["Content-Disposition"])
+
+# 로깅 설정
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+from logging.handlers import RotatingFileHandler
+
+handler = RotatingFileHandler('app.log', maxBytes=1000000, backupCount=5)
+logging.getLogger().addHandler(handler)
+
+@app.before_request
+def log_request_info():
+    logging.info(f"=== [REQUEST] {request.method} {request.path} ===")
+
+    # 1) 요청 헤더 로깅
+    logging.debug(f"Headers: {dict(request.headers)}")
+
+    # 2) 쿼리 파라미터(GET args) 로깅
+    if request.args:
+        logging.debug(f"Query params: {request.args.to_dict()}")
+
+    # 3) JSON Payload 로깅
+    if request.is_json:
+        try:
+            payload = request.get_json()
+            logging.debug(f"JSON Payload: {payload}")
+        except Exception as e:
+            logging.debug(f"JSON Parse Error: {e}")
+
+    # 4) Form Data 로깅
+    if request.form:
+        logging.debug(f"Form Data: {request.form.to_dict()}")
+
+    # 5) 파일 업로드 로깅
+    if request.files:
+        logging.debug(f"Files: {request.files.to_dict()}")
+
+    logging.info("=== [REQUEST LOG END] ===\n")
 
 # ✅ Blueprint 등록
 register_blueprints(app)

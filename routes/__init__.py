@@ -9,7 +9,8 @@ from .htmlToPdf import htmlToPdf_bp
 from .email import email_bp
 from .approval import approval_bp
 from .users import users_bp
-
+from .estimate import estimate_bp
+from .products import products_bp
 # 📌 Blueprint 등록
 def register_blueprints(app):
     app.register_blueprint(files_bp)      # 파일 관련 API 등록
@@ -20,3 +21,5 @@ def register_blueprints(app):
     app.register_blueprint(email_bp)  # 이메일 관련 API 등록
     app.register_blueprint(approval_bp)  # 결재요청 관련 API 등록
     app.register_blueprint(users_bp)  # 사용자 관련 API 등록
+    app.register_blueprint(estimate_bp)  # 견적 관련 API 등록
+    app.register_blueprint(products_bp)  # 제품 관련 API 등록
