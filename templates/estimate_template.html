@@ -202,7 +202,12 @@
           </tr>
           <tr>
             <td style="text-align: left; padding: 4px; border: none; width: 80px;">참&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;조:</td>
-            <td style="text-align: left; padding: 4px; border: none;">{{ aaa }} 님</td>
+            <td style="text-align: left; padding: 4px; border: none;">
+              {% if references %}
+                {{ references | map(attribute='manager_name') | join(', ') }} 님
+              {% else %}
+                없음
+              {% endif %}</td>
           </tr>
           <tr>
             <td style="text-align: left; padding: 4px; border: none;">프로젝트명:</td>
@@ -269,8 +274,8 @@
       <td>{{ item.p_description }}</td>
       <td>{{ item.quantity }}</td>
       <td>{{ "{:,}".format(item.p_price | default(0) | int) }}</td>
-      <td>{{ "{:,}".format(item.p_price | default(0) | int) }}</td>
-      <td>{{ "{:,}".format(item.final_price | default(0) | int) }}</td>
+      <td>{{ "{:,}".format(item.unit_price | default(0) | int) }}</td><!-- 공급단가 -->
+      <td>{{ "{:,}".format(item.total_price | default(0) | int) }}</td><!-- 공급가 합계 -->
     </tr>
     {% endfor %}
 

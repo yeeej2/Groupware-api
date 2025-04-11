@@ -6,21 +6,31 @@ from extensions import mail
 from routes import register_blueprints  # ✅ mail이 분리됐으니 이건 ok
 
 app = Flask(__name__)
+app.secret_key = "itsin-dev-key"  # ✅ 요기! 반드시 앱 생성 직후에
+
+# 로그인 설정
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # 💥 CORS 쿠키 허용을 위해 반드시 None
+app.config['SESSION_COOKIE_SECURE'] = False     # 개발 중엔 False (HTTPS가 아닐 경우)
+
 
 # 📬 메일 서버 설정
 app.config['MAIL_SERVER'] = 'outbound.daouoffice.com'  # 사내 SMTP 서버
-app.config['MAIL_PORT'] = 25                            # 포트 번호
-app.config['MAIL_USERNAME'] = ''         # 보내는 사람 메일 주소
-app.config['MAIL_PASSWORD'] = ''             # 해당 계정의 비밀번호
+app.config['MAIL_PORT'] = 465                            # 포트 번호
+app.config['MAIL_USERNAME'] = 'ldh@itsin.co.kr'         # 보내는 사람 메일 주소
+app.config['MAIL_PASSWORD'] = 'dlcmgus12#$'             # 해당 계정의 비밀번호
 app.config['MAIL_USE_TLS'] = False                      # TLS 안 씀 (25번 포트는 STARTTLS일 수도 있지만 여기선 False)
-app.config['MAIL_USE_SSL'] = False                      # SSL도 안 씀
-app.config['MAIL_DEFAULT_SENDER'] = ''   # 기본 보내는 사람 주소
+app.config['MAIL_USE_SSL'] = True                      # SSL도 안 씀
+app.config['MAIL_DEFAULT_SENDER'] = 'yeji0045@itsin.co.kr'   # 기본 보내는 사람 주소
 
 # 초기화
 mail.init_app(app)
 
 # CORS
-CORS(app, expose_headers=["Content-Disposition"])
+CORS(app,
+     supports_credentials=True,
+     origins=["http://172.16.21.28:3000"],  # 🔥 React 주소 정확히!
+     expose_headers=["Content-Disposition"]
+)
 
 # 로깅 설정
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

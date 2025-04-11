@@ -83,6 +83,8 @@ def add_estimate():
     # 제품 목록
     products = data.get('products', [])
 
+    ref_managers = data.get("ref_managers", [])
+
     conn = get_db_connection()
 
     try:
@@ -96,10 +98,10 @@ def add_estimate():
             # 1) `estimate` 테이블에 데이터 삽입
             sql_estimate = """
             INSERT INTO estimate (
-                quote_id, quote_title, customer_id, sales_id, valid_until,
+                quote_id, version, quote_title, customer_id, sales_id, valid_until,
                 delivery_condition, payment_condition, warranty_period, remarks,
                 opinion, memo, total_price_before_vat, vat, total_price_with_vat, quote_amount, unty_file_no
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, '0', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             cursor.execute(sql_estimate, (
                 quote_id, quote_title, customer_id, sales_id, valid_until,
@@ -127,6 +129,25 @@ def add_estimate():
                     estimate_id, product_id, quantity, unit_price, discount_rate,
                     total_price, final_price
                 ))
+
+
+            # 7) 견적 참조 정보 저장
+            if ref_managers:
+                insert_estimate_reference_query = """
+                INSERT INTO estimate_reference (
+                    estimate_id, customer_id, manager_id, manager_name, manager_email, tel_no, position
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """
+                for manager in ref_managers:
+                    cursor.execute(insert_estimate_reference_query, (
+                        estimate_id,
+                        manager.get("customer_id"),
+                        manager.get("manager_id"),
+                        manager.get("manager_nm"),
+                        manager.get("email"),
+                        manager.get("tel_no"),
+                        manager.get("position")
+                    ))
 
         conn.commit()
         return jsonify({"success": True, "estimate_id": estimate_id}), 201
@@ -196,6 +217,11 @@ def get_estimates():
         LEFT JOIN customer c ON e.customer_id = c.customer_id
         LEFT JOIN user u ON e.sales_id = u.usr_id
         WHERE 1=1
+        AND e.version = (
+            SELECT MAX(version) 
+            FROM estimate 
+            WHERE quote_id = e.quote_id
+        )
         """
         if customer_nm:
             sql += f" AND c.customer_nm LIKE '%{customer_nm}%'"
@@ -235,8 +261,9 @@ def get_estimate_detail(estimate_id):
         # 1) `estimate` 테이블에서 견적서 기본 정보 조회
         sql_estimate = """
         SELECT 
-            e.id AS estimate_id,
+            e.id,
             e.quote_id,
+            e.version,
             e.quote_title,
             e.customer_id,
             e.sales_id,
@@ -259,7 +286,7 @@ def get_estimate_detail(estimate_id):
         LEFT JOIN user u ON e.sales_id = u.usr_id
         WHERE e.id = %s
         """
-        cursor.execute(sql_estimate, (estimate_id,))
+        cursor.execute(sql_estimate, (estimate_id))
         estimate = cursor.fetchone()
 
         if not estimate:
@@ -285,7 +312,45 @@ def get_estimate_detail(estimate_id):
         cursor.execute(sql_products, (estimate_id,))
         products = cursor.fetchall()
 
-        # 3) `quote_amount`를 한글로 변환
+        # 3) `estimate` 자신의 차수를 제외한 견적서 리스트 조회
+        sqlList = """
+        SELECT 
+            e.id,
+            e.quote_id,
+            e.version,
+            e.quote_title,
+            DATE_FORMAT(e.valid_until, '%%Y-%%m-%%d') AS valid_until,
+            DATE_FORMAT(e.created_at, '%%Y-%%m-%%d %%H:%%i') AS created_at,
+            e.quote_amount
+        FROM estimate e
+        WHERE e.quote_id = (
+            SELECT quote_id 
+            FROM estimate 
+            WHERE id = %s
+        )
+        """
+        cursor.execute(sqlList, (estimate_id))
+        versionList = cursor.fetchall()
+        logging.info(f"versionList: {versionList}")
+
+        # 3) 참조자 조회
+        sqlList = """
+        SELECT 
+            e.estimate_id,
+            e.customer_id,
+            e.manager_id,
+            e.manager_name AS manager_nm,
+            e.manager_email,
+            e.tel_no,
+            e.position
+        FROM estimate_reference e
+        WHERE e.estimate_id = %s
+        """
+        cursor.execute(sqlList, (estimate_id))
+        referenceList = cursor.fetchall()
+        logging.info(f"referenceList: {referenceList}")
+
+        # 5) `quote_amount`를 한글로 변환
         def convert_to_korean_currency(amount):
             units = ["", "만", "억", "조"]
             nums = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"]
@@ -301,13 +366,15 @@ def get_estimate_detail(estimate_id):
 
         total_price_korean = convert_to_korean_currency(estimate["quote_amount"])
 
-        # 4) 응답 데이터 구성
+        # 6) 응답 데이터 구성
         response = {
             "success": True,
             "data": {
                 "estimate": estimate,
                 "products": products,
-                "total_price_korean": total_price_korean
+                "total_price_korean": total_price_korean,
+                "versionList": versionList,
+                "referenceList": referenceList
             }
         }
 
@@ -399,11 +466,14 @@ def update_estimate(estimate_id):
                 unit_price = item.get('unit_price')
                 total_price = item.get('total_price')
                 discount_rate = item.get('discount_rate')
-                final_price = item.get('final_price')
+                final_price = item.get('final_price',0)
 
                 cursor.execute(ins_sql, (
                     estimate_id, product_id, quantity, unit_price, total_price, discount_rate, final_price
                 ))
+
+            # TODO: 견적 참조 정보 수정
+            # 4) 견적 참조 정보 삭제 후 재삽입
 
         conn.commit()
         return jsonify({"success": True})
@@ -448,4 +518,101 @@ def delete_estimate(estimate_id):
 
 
 
+
+@estimate_bp.route('/api/estimates/<int:estimate_id>/clone', methods=['POST'])
+def clone_estimate(estimate_id):
+    conn = get_db_connection()
+    try:
+        data = request.get_json()  # 🔥 프론트에서 보낸 수정된 데이터 받기
+        ref_managers = data.get("ref_managers", [])
+        with conn.cursor() as cursor:
+            # 1. 원본 견적서 불러오기 (quote_id 가져오기 위함)
+            cursor.execute("SELECT quote_id FROM estimate WHERE id = %s", (estimate_id,))
+            original = cursor.fetchone()
+            if not original:
+                return jsonify({"success": False, "error": "원본 견적서를 찾을 수 없습니다."}), 404
+
+            quote_id = original['quote_id']
+
+            # 2. 가장 높은 version 구하기
+            cursor.execute("SELECT MAX(version) AS max_ver FROM estimate WHERE quote_id = %s", (quote_id,))
+            max_ver = cursor.fetchone()['max_ver'] or 0
+            new_version = max_ver + 1
+
+            # 3. 새로운 estimate 저장 (🔥 수정된 데이터 사용!)
+            sql = """
+                INSERT INTO estimate (
+                    quote_id, version, quote_title, customer_id, sales_id, valid_until,
+                    delivery_condition, payment_condition, warranty_period, remarks,
+                    opinion, memo, total_price_before_vat, vat, total_price_with_vat,
+                    quote_amount, unty_file_no
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(sql, (
+                quote_id,
+                new_version,
+                data.get('quote_title'),
+                data.get('customer_id'),
+                data.get('sales_id'),
+                data.get('valid_until'),
+                data.get('delivery_condition'),
+                data.get('payment_condition'),
+                data.get('warranty_period'),
+                data.get('remarks'),
+                data.get('opinion'),
+                data.get('memo'),
+                data.get('total_price_before_vat'),
+                data.get('vat'),
+                data.get('total_price_with_vat'),
+                data.get('quote_amount'),
+                data.get('unty_file_no')
+            ))
+            new_estimate_id = cursor.lastrowid
+
+            # 4. 제품 목록 복사 (프론트에서 전달한 products 사용)
+            products = data.get('products', [])
+            product_sql = """
+                INSERT INTO t_estimate_product
+                (estimate_id, product_id, quantity, unit_price, total_price, discount_rate)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            for p in products:
+                cursor.execute(product_sql, (
+                    new_estimate_id,
+                    p['product_id'],
+                    p['quantity'],
+                    p['unit_price'],
+                    p['total_price'],
+                    p['discount_rate'],
+                ))
+
+            # 7) 견적 참조 정보 저장
+            if ref_managers:
+                insert_estimate_reference_query = """
+                INSERT INTO estimate_reference (
+                    estimate_id, customer_id, manager_id, manager_name, manager_email, tel_no, position
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """
+                for manager in ref_managers:
+                    cursor.execute(insert_estimate_reference_query, (
+                        new_estimate_id,
+                        manager.get("customer_id"),
+                        manager.get("manager_id"),
+                        manager.get("manager_nm"),
+                        manager.get("email"),
+                        manager.get("tel_no"),
+                        manager.get("position")
+                    ))
+
+        conn.commit()
+        return jsonify({"success": True, "new_estimate_id": new_estimate_id}), 201
+
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"견적 복제 중 오류: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    finally:
+        conn.close()
 

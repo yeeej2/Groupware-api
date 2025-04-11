@@ -11,6 +11,9 @@ from .approval import approval_bp
 from .users import users_bp
 from .estimate import estimate_bp
 from .products import products_bp
+from .login import login_bp
+from .excel import excel_bp
+
 # 📌 Blueprint 등록
 def register_blueprints(app):
     app.register_blueprint(files_bp)      # 파일 관련 API 등록
@@ -23,3 +26,5 @@ def register_blueprints(app):
     app.register_blueprint(users_bp)  # 사용자 관련 API 등록
     app.register_blueprint(estimate_bp)  # 견적 관련 API 등록
     app.register_blueprint(products_bp)  # 제품 관련 API 등록
+    app.register_blueprint(login_bp)  # 로그인 관련 API 등록
+    app.register_blueprint(excel_bp)  # 엑셀 관련 API 등록

@@ -43,7 +43,9 @@ def send_email():
         with open(pdf_path, 'rb') as f:
             msg.attach(pdf_filename, 'application/pdf', f.read())
         logging.info("send 완전 직전")
-        mail.send(msg)
+        aaa = mail.send(msg)
+        logging.info("send 완료")
+        logging.info(aaa)
 
 
         logging.info("끝?????")

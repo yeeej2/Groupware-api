@@ -90,6 +90,20 @@ def generate_pdf(doc_type, doc_id):
             cursor.execute(sql_products, (doc_id,))
             products = cursor.fetchall()
 
+            # 참조자 정보 조회
+            sql_references = """
+            SELECT 
+                er.manager_id,
+                er.manager_name,
+                er.manager_email,
+                er.tel_no,
+                er.position
+            FROM estimate_reference er
+            WHERE er.estimate_id = %s
+            """
+            cursor.execute(sql_references, (doc_id,))
+            references = cursor.fetchall()
+
             # `quote_amount`를 한글로 변환
             def convert_to_korean_currency(amount):
                 if not amount or amount <= 0:
@@ -123,7 +137,8 @@ def generate_pdf(doc_type, doc_id):
                 "estimate": estimate,
                 "items": products,
                 "total_price_korean": total_price_korean,
-                "date" : formatted
+                "date" : formatted,
+                "references": references,
             }
 
             template_name = 'estimate_template.html'
