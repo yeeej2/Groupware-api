@@ -28,7 +28,7 @@ mail.init_app(app)
 # CORS
 CORS(app,
      supports_credentials=True,
-     origins=["http://172.16.21.28:3000"],  # 🔥 React 주소 정확히!
+     origins=["http://172.16.21.28:3000", "http://localhost:3090"],  # 🔥 React 주소 정확히!
      expose_headers=["Content-Disposition"]
 )
 

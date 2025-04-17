@@ -168,12 +168,18 @@ def export_estimate_excel(estimate_id):
 
 
     # 8. 메모리에 저장 후 반환
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
+    # output = io.BytesIO()
+    # wb.save(output)
+    # output.seek(0)
+
+    # 🔥 실제 파일 경로로 저장
+    filename = f"estimate_{estimate['quote_id']}_{datetime.today().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    file_path = os.path.join("/usr/local/flask/yeji/groupware-api/temp", filename)
+    wb.save(file_path)
 
     return send_file(
-        output,
+        #output,
+        file_path,
         as_attachment=True,
         download_name = f"견적서_{estimate['quote_id']}_{datetime.today().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
