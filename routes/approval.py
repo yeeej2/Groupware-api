@@ -10,6 +10,12 @@ logging.basicConfig(level=logging.DEBUG)
 
 approval_bp = Blueprint('approval', __name__)
 
+from auth.decorators import require_token
+@approval_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
 def generate_approval_doc_number(conn):
     """
     고유 결재 문서 번호를 생성하는 예시 함수

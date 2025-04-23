@@ -1,9 +1,16 @@
 from models.database import get_db_connection
 from flask import Blueprint, request, jsonify
 import logging
+import bcrypt
 
 # 📌 Blueprint 생성
 users_bp = Blueprint('users', __name__)
+
+from auth.decorators import require_token
+@users_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
 
 # 🔹 snake_case → camelCase 변환 함수
 def snake_to_camel(snake_str):
@@ -19,7 +26,7 @@ def convert_keys_to_camel_case(data):
     return data
 
 # 📌 Create a new user
-@users_bp.route('/users', methods=['POST'])
+@users_bp.route('/usersss', methods=['POST'])
 def create_user():
     data = request.json
     conn = get_db_connection()
@@ -145,3 +152,150 @@ def delete_user(user_id):
     conn.close()
 
     return jsonify({'message': 'User deleted successfully'}), 200
+
+
+@users_bp.route('/users', methods=['GET'])
+def get_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM user;", ())
+    user = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if user:
+        return jsonify({'result': 'success', "data" : user}), 200
+    else:
+        return jsonify({'message': 'User not found'}), 404
+    
+
+
+
+
+
+
+
+@users_bp.route('/users/me', methods=['GET'])
+def get_my_info():
+    usr_id = request.user["usr_id"]
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT usr_id, login_id, name, role_cd, depart_cd, email, phone, position  FROM user WHERE usr_id = %s", (usr_id,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({"error": "사용자를 찾을 수 없습니다."}), 404
+
+        return jsonify({"user": user}), 200
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+
+
+
+
+
+
+@users_bp.route('/users/me', methods=['PUT'])
+def update_my_info():
+    usr_id = request.user["usr_id"]  # ✅ 로그인 유저 ID
+    data = request.get_json()
+
+    # 수정 가능한 필드만 따로 정의
+    editable_fields = ["name", "phone", "depart_cd", "position"]
+
+    # 필드가 하나라도 없을 수 있으니까 None이면 기존 값 유지되도록 SQL 작성
+    set_clause = []
+    values = []
+
+    for field in editable_fields:
+        if field in data:
+            set_clause.append(f"{field} = %s")
+            values.append(data[field])
+
+    if not set_clause:
+        return jsonify({"error": "수정할 항목이 없습니다."}), 400
+
+    values.append(usr_id)  # WHERE 조건용
+
+    query = f"""
+        UPDATE user
+        SET {', '.join(set_clause)}
+        WHERE usr_id = %s
+    """
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(query, tuple(values))
+        conn.commit()
+
+        # 수정된 결과 다시 조회해서 반환
+        cursor.execute("SELECT usr_id, login_id, name, role_cd, depart_cd, email, phone, position FROM user WHERE usr_id = %s", (usr_id,))
+        user = cursor.fetchone()
+        return jsonify(user), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": "업데이트 실패", "message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+
+
+
+
+
+
+@users_bp.route('/users/password', methods=['PUT'])
+def change_password():
+    usr_id = request.user["usr_id"]
+    data = request.get_json()
+
+    current_pw = data.get("current_password")
+    new_pw = data.get("new_password")
+
+    if not current_pw or not new_pw:
+        return jsonify({"error": "현재 비밀번호와 새 비밀번호는 필수입니다."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # 1. 현재 비밀번호 확인을 위한 DB 조회
+        cursor.execute("SELECT pw, pw_salt_val FROM user WHERE usr_id = %s", (usr_id,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({"error": "사용자를 찾을 수 없습니다."}), 404
+
+        stored_hash = user["pw"]
+        stored_salt = user["pw_salt_val"]
+
+        # 2. 기존 비밀번호 검증
+        if not bcrypt.checkpw(current_pw.encode(), stored_hash.encode()):
+            return jsonify({"error": "현재 비밀번호가 일치하지 않습니다."}), 401
+
+        # 3. 새 비밀번호 해싱 및 salt 생성
+        new_salt = bcrypt.gensalt()
+        new_hashed_pw = bcrypt.hashpw(new_pw.encode(), new_salt).decode()
+
+        # 4. DB 업데이트
+        cursor.execute(
+            "UPDATE user SET pw = %s, pw_salt_val = %s WHERE usr_id = %s",
+            (new_hashed_pw, new_salt.decode(), usr_id)
+        )
+        conn.commit()
+
+        return jsonify({"message": "비밀번호가 변경되었습니다."}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": "비밀번호 변경 실패", "message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()

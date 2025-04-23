@@ -5,12 +5,18 @@ import logging
 import json
 from decimal import Decimal
 from datetime import datetime
+from auth.decorators import require_token
 
 # 🔥 로깅 설정
 logging.basicConfig(level=logging.DEBUG)
 
 # 🔹 Blueprint 생성
 estimate_bp = Blueprint('estimate', __name__)
+
+@estimate_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
 
 # 🔹 snake_case → camelCase 변환 함수
 def snake_to_camel(snake_str):

@@ -8,6 +8,12 @@ logging.basicConfig(level=logging.DEBUG)
 
 contract_bp = Blueprint('contract', __name__)  # 블루프린트 생성
 
+from auth.decorators import require_token
+@contract_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
 
 
 

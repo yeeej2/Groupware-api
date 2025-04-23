@@ -5,12 +5,18 @@ import logging
 import json
 from decimal import Decimal
 from datetime import datetime
+from auth.decorators import require_token
 
 # 🔥 로깅 설정
 logging.basicConfig(level=logging.DEBUG)
 
 # 🔹 Blueprint 생성
 customers_bp = Blueprint('customers', __name__)
+
+@customers_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
 
 # 🔹 snake_case → camelCase 변환 함수
 def snake_to_camel(snake_str):
@@ -190,6 +196,7 @@ def get_customers():
     고객 리스트를 조회하는 API (검색 기능 포함)
     - URL: /customers
     """
+    logging.info("고객 리스트 조회 요청 도착")
     logging.info(request)
     search_query = request.args.get('searchQuery', '')
     biz_num_query = request.args.get('bizNumQuery', '')

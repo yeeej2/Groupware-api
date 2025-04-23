@@ -9,6 +9,12 @@ from flask import send_from_directory
 # 📌 Blueprint 생성
 products_bp = Blueprint('products', __name__)
 
+from auth.decorators import require_token
+@products_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
 # 이미지 업로드 경로
 UPLOAD_FOLDER = '/var/www/html/ERD/image'  # 실제 업로드 경로
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -293,6 +299,5 @@ def get_product_detail(product_id):
 
 
 
-@products_bp.route('/image/<path:filename>')
-def serve_uploaded_image(filename):
-    return send_from_directory('/var/www/html/ERD/image', filename)
+# @products_bp.route('/image/<path:filename>') --> htmlToPdf.py 로 옮김!!! 2025.04.23 토큰 인증 때문에...
+

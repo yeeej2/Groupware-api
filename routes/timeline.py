@@ -4,6 +4,12 @@ from flask import Blueprint, request, jsonify
 # 📌 Blueprint 생성
 timeline_bp = Blueprint('timeline', __name__)
 
+from auth.decorators import require_token
+@timeline_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
 # 📌 특정 고객의 타임라인 조회 API (GET)
 @timeline_bp.route('/timeline/<int:customer_id>', methods=['GET'])
 def get_timeline(customer_id):

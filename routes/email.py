@@ -11,6 +11,14 @@ import os
 # 📌 Blueprint 생성
 email_bp = Blueprint('email', __name__)
 
+from auth.decorators import require_token
+@email_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
+
+
 
 PDF_OUTPUT_PATH = '/usr/local/flask/yeji/groupware-api/temp'
 

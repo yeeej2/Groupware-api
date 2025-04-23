@@ -13,7 +13,8 @@ from .estimate import estimate_bp
 from .products import products_bp
 from .login import login_bp
 from .excel import excel_bp
-from .contractReivew import contractReivew_bp
+from .contractReivew import contractReivew_bp   
+from .contractApproval import contractApproval_bp  
 
 # 📌 Blueprint 등록
 def register_blueprints(app):
@@ -30,3 +31,4 @@ def register_blueprints(app):
     app.register_blueprint(login_bp)  # 로그인 관련 API 등록
     app.register_blueprint(excel_bp)  # 엑셀 관련 API 등록
     app.register_blueprint(contractReivew_bp)  # 계약검토서 관련 API 등록
+    app.register_blueprint(contractApproval_bp)  # 계약검토서 관련 API 등록

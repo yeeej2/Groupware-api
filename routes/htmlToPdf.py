@@ -6,6 +6,8 @@ import pdfkit
 from models.database import get_db_connection
 from datetime import datetime
 
+from flask import send_from_directory
+
 from flask import render_template
 
 import os
@@ -13,6 +15,12 @@ import os
 config = pdfkit.configuration(wkhtmltopdf='/usr/local/bin/wkhtmltopdf')  # 실제 경로 확인 필요
 
 htmlToPdf_bp = Blueprint('htmlToPdf', __name__)
+
+from auth.decorators import require_token
+# @htmlToPdf_bp.before_request
+# @require_token
+# def require_token_for_user_bp():
+#     pass
 
 TEMPLATE_PATH = os.path.join(os.getcwd(), 'templates')  # 템플릿 폴더
 PDF_OUTPUT_PATH = os.path.join(os.getcwd(), 'temp')
@@ -233,3 +241,11 @@ def download_pdf():
     return send_file(pdf_path, as_attachment=True)
 
 
+
+
+
+
+
+@htmlToPdf_bp.route('/image/<path:filename>')
+def serve_uploaded_image(filename):
+    return send_from_directory('/var/www/html/ERD/image', filename)

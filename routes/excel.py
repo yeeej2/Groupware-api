@@ -9,6 +9,13 @@ from openpyxl.drawing.image import Image
 
 excel_bp = Blueprint('excel', __name__)
 
+from auth.decorators import require_token
+
+# @excel_bp.before_request
+# @require_token
+# def require_token_for_user_bp():
+#     pass
+
 # 한글 금액 변환
 def number_to_korean(num):
     units = ["", "만", "억", "조"]

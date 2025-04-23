@@ -11,6 +11,12 @@ from urllib.parse import quote
 # 📌 Blueprint 생성
 files_bp = Blueprint('files', __name__)
 
+from auth.decorators import require_token
+@files_bp.before_request
+@require_token
+def require_token_for_user_bp():
+    pass
+
 # 파일 저장 폴더 설정
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')

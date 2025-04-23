@@ -3,17 +3,20 @@ from models.database import get_db_connection
 import logging #로그 남기기
 from datetime import datetime
 
-
-
 logging.basicConfig(level=logging.DEBUG)
 
-contractReivew_bp = Blueprint('contractReivew', __name__)  # 블루프린트 생성
+contractApproval_bp = Blueprint('contractApproval', __name__)  # 블루프린트 생성
 
 from auth.decorators import require_token
-@contractReivew_bp.before_request
+@contractApproval_bp.before_request
 @require_token
 def require_token_for_user_bp():
     pass
+
+
+
+
+
 
 # 🔹 snake_case → camelCase 변환 함수
 def snake_to_camel(snake_str):
@@ -29,12 +32,13 @@ def convert_keys_to_camel_case(data):
     return data
 
 
-@contractReivew_bp.route('/contractReviews', methods=['GET'])
+
+
+
+@contractApproval_bp.route('/contractApprovals', methods=['GET'])
 def list_contract_reviews():
     conn = get_db_connection()
     cursor = conn.cursor()
-    logging.info("oooooooooooooooooooooooooooooooooooooooooooooooo")
-    logging.info(request.args)
 
     try:
         # 쿼리 파라미터 가져오기
@@ -116,11 +120,12 @@ def list_contract_reviews():
 
 
 
-@contractReivew_bp.route('/contractReviews/<int:id>', methods=['GET'])
+
+
+@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['GET'])
 def get_contract_review(id):
     conn = get_db_connection()
     cursor = conn.cursor()
-
 
     try:
         # 마스터 정보
@@ -179,8 +184,7 @@ def get_contract_review(id):
 
 
 
-
-@contractReivew_bp.route('/contractReviews', methods=['POST'])
+@contractApproval_bp.route('/contractApprovals', methods=['POST'])
 def create_contract_review():
     data = request.get_json()
     conn = get_db_connection()
@@ -249,8 +253,7 @@ def create_contract_review():
 
 
 
-
-@contractReivew_bp.route('/contractReviews/<int:id>', methods=['PUT'])
+@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['PUT'])
 def update_contract_review(id):
     data = request.get_json()
     conn = get_db_connection()
@@ -308,22 +311,22 @@ def update_contract_review(id):
 
 
 
-@contractReivew_bp.route('/contractReviews/<int:id>', methods=['DELETE'])
+@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['DELETE'])
 def delete_contract_review(id):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
-        # 1. 계약 검토서 존재 여부 확인
-        cursor.execute("SELECT id FROM contract_review WHERE id = %s", (id,))
+        # 1. 수주품의서 존재 여부 확인
+        cursor.execute("SELECT id FROM contract_approval WHERE id = %s", (id,))
         review = cursor.fetchone()
         if not review:
             return jsonify({'status': 'error', 'message': '존재하지 않는 계약 검토서입니다.'}), 404
 
         # 2. 관련 데이터 삭제
-        cursor.execute("DELETE FROM contract_sales_route WHERE contract_review_id = %s", (id,))
-        cursor.execute("DELETE FROM contract_detail WHERE contract_review_id = %s", (id,))
-        cursor.execute("DELETE FROM contract_review WHERE id = %s", (id,))
+        # cursor.execute("DELETE FROM contract_sales_route WHERE contract_review_id = %s", (id,))
+        # cursor.execute("DELETE FROM contract_detail WHERE contract_review_id = %s", (id,))
+        # cursor.execute("DELETE FROM contract_review WHERE id = %s", (id,))
 
         conn.commit()
         return jsonify({'status': 'success', 'deletedId': id})
