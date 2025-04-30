@@ -1,22 +1,16 @@
 from flask import Blueprint, request, jsonify
 from models.database import get_db_connection
-import logging #로그 남기기
+from auth.decorators import require_token
 from datetime import datetime
+import logging
 
+contractApproval_bp = Blueprint('contractApproval', __name__)
 logging.basicConfig(level=logging.DEBUG)
 
-contractApproval_bp = Blueprint('contractApproval', __name__)  # 블루프린트 생성
-
-from auth.decorators import require_token
 @contractApproval_bp.before_request
 @require_token
 def require_token_for_user_bp():
     pass
-
-
-
-
-
 
 # 🔹 snake_case → camelCase 변환 함수
 def snake_to_camel(snake_str):
@@ -25,315 +19,354 @@ def snake_to_camel(snake_str):
 
 # 🔹 모든 키를 camelCase로 변환하는 함수
 def convert_keys_to_camel_case(data):
-    if isinstance(data, list):  # 리스트 처리
+    if isinstance(data, list):
         return [convert_keys_to_camel_case(item) for item in data]
-    elif isinstance(data, dict):  # 딕셔너리 처리
+    elif isinstance(data, dict):
         return {snake_to_camel(k): v for k, v in data.items()}
     return data
 
+def null_if_empty(value):
+    return None if value == '' else value
+
+# 🔥 수주품의서 등록 (POST)
+@contractApproval_bp.route('/contractApproval', methods=['POST'])
+def create_contract_approval():
+    data = request.get_json()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        service_items = data.pop('serviceItems', [])
+
+        # Validate estimate_id and contract_id
+        estimate_id = data.get('estimateId')
+        contract_id = data.get('contractId')
+
+        if estimate_id and contract_id:
+            return jsonify({'status': 'fail', 'message': 'Only one of estimateId or contractId should be provided.'}), 400
+
+        if not estimate_id and not contract_id:
+            return jsonify({'status': 'fail', 'message': 'Either estimateId or contractId must be provided.'}), 400
+
+        # Handle 'Other' cases for paymentType and vendorPaymentType
+        if data.get('paymentType') == '기타':
+            data['paymentType'] = data.get('paymentTypeOther')
+        if data.get('vendorPaymentType') == '기타':
+            data['vendorPaymentType'] = data.get('vendorPaymentTypeOther')
+
+        # 1. 채번 생성
+        today = datetime.today().strftime('%Y%m%d')
+        cursor.execute("""
+            SELECT COUNT(*) + 1 AS next_seq
+            FROM contract_approval
+            WHERE DATE(created_at) = CURDATE()
+        """)
+        next_seq = cursor.fetchone()['next_seq']
+        contract_approval_no = f"ORD-{today}-{next_seq:03d}"
+
+        # 2. 채번 저장
+        data['contractApprovalNo'] = contract_approval_no
+
+        # 3. Insert 쿼리
+        sql = """
+        INSERT INTO contract_approval (
+            contract_approval_no, estimate_id, contract_id, version, project_name,
+            customer_company_id, end_customer_id, sales_id, tax_invoice_manager_id, tax_invoice_request_date,
+            contract_start_date, contract_end_date, payment_type, payment_condition, submit_documents,
+            sales_amount, purchase_amount, profit, vendor_manager_name, vendor_manager_position,
+            vendor_company_name, vendor_manager_email, vendor_manager_phone, vendor_order_request_date,
+            vendor_delivery_address, vendor_payment_type, vendor_payment_condition, unty_file_no, special_notes
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+
+        values = (
+            data.get('contractApprovalNo'),
+            null_if_empty(data.get('estimateId')),
+            null_if_empty(data.get('contractId')),
+            data.get('version'),
+            data.get('projectName'),
+            null_if_empty(data.get('customerCompanyId')),
+            null_if_empty(data.get('endCustomerId')),
+            null_if_empty(data.get('salesId')),
+            null_if_empty(data.get('taxInvoiceManagerId')),
+            data.get('taxInvoiceRequestDate'),
+            data.get('contractStartDate'),
+            data.get('contractEndDate'),
+            data.get('paymentType'),
+            data.get('paymentCondition'),
+            data.get('submitDocuments'),
+            data.get('salesAmount'),
+            data.get('purchaseAmount'),
+            data.get('profit'),
+            data.get('vendorManagerName'),
+            data.get('vendorManagerPosition'),
+            data.get('vendorCompanyName'),
+            data.get('vendorManagerEmail'),
+            data.get('vendorManagerPhone'),
+            data.get('vendorOrderRequestDate'),
+            data.get('vendorDeliveryAddress'),
+            data.get('vendorPaymentType'),
+            data.get('vendorPaymentCondition'),
+            data.get('untyFileNo'),
+            data.get('specialNotes')
+        )
 
 
+        cursor.execute(sql, values)
+        contract_approval_id = cursor.lastrowid
 
 
-@contractApproval_bp.route('/contractApprovals', methods=['GET'])
-def list_contract_reviews():
+        logging.info("DSDSDSDSDSㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇㅇ")
+        logging.info(service_items)
+        # 4. 서비스 항목 삽입
+        if service_items:
+            for item in service_items:
+                cursor.execute('''
+                    INSERT INTO contract_approval_service (
+                        contract_approval_id, service_type, contract_type, service_category,
+                        item_name, description, unit, quantity, unit_price, amount
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    contract_approval_id,
+                    item.get('serviceType'),
+                    item.get('contractType'),
+                    item.get('serviceCategory'),
+                    item.get('itemName'),
+                    item.get('description'),
+                    item.get('unit'),
+                    item.get('quantity', 0),
+                    item.get('unitPrice', 0),
+                    item.get('amount', 0)
+                ))
+
+        conn.commit()
+        return jsonify({'status': 'success', 'newId': contract_approval_id})
+    except Exception as e:
+        conn.rollback()
+        logging.exception("Create contract approval failed")
+        return jsonify({'status': 'fail', 'message': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+
+# 🔥 수주품의서 단건 조회 (GET)
+@contractApproval_bp.route('/contractApproval/<int:contract_approval_id>', methods=['GET'])
+def get_contract_approval(contract_approval_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Fetch contract approval details
+        cursor.execute('''
+            SELECT  DATE_FORMAT(ca.contract_start_date, '%%Y-%%m-%%d') AS contract_start_date,
+                    DATE_FORMAT(ca.contract_end_date, '%%Y-%%m-%%d') AS contract_end_date,
+                    DATE_FORMAT(ca.vendor_order_request_date, '%%Y-%%m-%%d') AS vendor_order_request_date,
+                    DATE_FORMAT(ca.tax_invoice_request_date, '%%Y-%%m-%%d') AS tax_invoice_request_date,
+                   c.customer_nm AS customer_company, 
+                   ec.customer_nm AS end_customer, 
+                   u.name AS sales_manager_name, 
+                   u.email AS sales_manager_email, 
+                   u.phone AS sales_manager_phone,
+                   tu.name AS tax_invoice_manager_name, 
+                   tu.email AS tax_invoice_manager_email, 
+                   tu.phone AS tax_invoice_manager_phone,
+                    CASE 
+                        WHEN ca.payment_type != '일시납' AND ca.payment_type != '월납' THEN '기타'
+                    END AS payment_type,
+                    CASE 
+                        WHEN ca.vendor_payment_type != '일시납' AND ca.vendor_payment_type != '월납' THEN '기타'
+                    END AS vendor_payment_type,
+                    ca.payment_type AS payment_type_other,
+                    ca.vendor_payment_type AS vendor_payment_type_other, 
+                    IF(ca.contract_id IS NOT NULL, 'contract', 'estimate') AS no_type,   
+                    ca.*,
+                    COALESCE(cc.contract_no, e.quote_id) AS no
+            FROM contract_approval ca
+            LEFT JOIN customer c ON ca.customer_company_id = c.customer_id
+            LEFT JOIN customer ec ON ca.end_customer_id = ec.customer_id
+            LEFT JOIN user u ON ca.sales_id = u.usr_id
+            LEFT JOIN user tu ON ca.tax_invoice_manager_id = tu.usr_id
+            LEFT JOIN estimate e ON ca.estimate_id = e.id
+            LEFT JOIN contract cc ON ca.contract_id = cc.contract_id
+            WHERE ca.contract_approval_id = %s
+        ''', (contract_approval_id,))
+        contract = cursor.fetchone()
+
+        if not contract:
+            return jsonify({'status': 'fail', 'message': 'Not Found'}), 404
+
+        # Fetch associated service items
+        cursor.execute('SELECT * FROM contract_approval_service WHERE contract_approval_id = %s', (contract_approval_id,))
+        services = cursor.fetchall()
+        services = convert_keys_to_camel_case(services)
+
+
+        # Convert keys to camelCase
+        result = convert_keys_to_camel_case({
+            **contract,
+            'serviceItems': services
+        })
+
+        return jsonify({'status': 'success', 'data': result})
+    except Exception as e:
+        logging.exception("Get contract approval failed")
+        return jsonify({'status': 'fail', 'message': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🔥 수주품의서 수정 (PUT)
+@contractApproval_bp.route('/contractApproval/<int:contract_approval_id>', methods=['PUT'])
+def update_contract_approval(contract_approval_id):
+    data = request.get_json()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        service_items = data.pop('serviceItems', [])
+
+        # Update 'Other' cases for paymentType and vendorPaymentType in update_contract_approval
+        if data.get('paymentType') == '기타':
+            data['paymentType'] = data.get('paymentTypeOther')
+        if data.get('vendorPaymentType') == '기타':
+            data['vendorPaymentType'] = data.get('vendorPaymentTypeOther')
+
+        sql = """
+        UPDATE contract_approval SET 
+        contract_approval_no = %s, estimate_id = %s, contract_id = %s, version = %s, project_name = %s, 
+        customer_company_id = %s, end_customer_id = %s, sales_id = %s, tax_invoice_manager_id = %s, tax_invoice_request_date = %s, 
+        contract_start_date = %s, contract_end_date = %s, payment_type = %s, payment_condition = %s, submit_documents = %s, 
+        sales_amount = %s, purchase_amount = %s, profit = %s, vendor_manager_name = %s, vendor_manager_position = %s, 
+        vendor_company_name = %s, vendor_manager_email = %s, vendor_manager_phone = %s, vendor_order_request_date = %s, 
+        vendor_delivery_address = %s, vendor_payment_type = %s, vendor_payment_condition = %s, unty_file_no = %s, special_notes = %s
+        WHERE contract_approval_id = %s
+        """
+
+        values = (
+            data['contractApprovalNo'], data['estimateId'], data['contractId'], data['version'], data['projectName'],
+            data['customerCompanyId'], data['endCustomerId'], data['salesId'], data['taxInvoiceManagerId'], data['taxInvoiceRequestDate'],
+            data['contractStartDate'], data['contractEndDate'], data['paymentType'], data['paymentCondition'], data['submitDocuments'],
+            data['salesAmount'], data['purchaseAmount'], data['profit'], data['vendorManagerName'], data['vendorManagerPosition'],
+            data['vendorCompanyName'], data['vendorManagerEmail'], data['vendorManagerPhone'], data['vendorOrderRequestDate'],
+            data['vendorDeliveryAddress'], data['vendorPaymentType'], data['vendorPaymentCondition'], data['untyFileNo'], data['specialNotes'],
+            contract_approval_id
+        )
+
+        cursor.execute(sql, values)
+
+        cursor.execute('DELETE FROM contract_approval_service WHERE contract_approval_id = %s', (contract_approval_id,))
+        if service_items:
+            for item in service_items:
+                cursor.execute('''
+                    INSERT INTO contract_approval_service
+                    (contract_approval_id, service_type, contract_type, service_category, item_name, description, unit, quantity, unit_price, amount)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    contract_approval_id,
+                    item.get('serviceType'),
+                    item.get('contractType'),
+                    item.get('serviceCategory'),
+                    item.get('itemName'),
+                    item.get('description'),
+                    item.get('unit'),
+                    item.get('quantity', 0),
+                    item.get('unitPrice', 0),
+                    item.get('amount', 0)
+                ))
+
+        conn.commit()
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        conn.rollback()
+        logging.exception("Update contract approval failed")
+        return jsonify({'status': 'fail', 'message': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🔥 수주품의서 삭제 (DELETE)
+@contractApproval_bp.route('/contractApproval/<int:contract_approval_id>', methods=['DELETE'])
+def delete_contract_approval(contract_approval_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('DELETE FROM contract_approval WHERE contract_approval_id = %s', (contract_approval_id,))
+        cursor.execute('DELETE FROM contract_approval_service WHERE contract_approval_id = %s', (contract_approval_id,))
+        conn.commit()
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        conn.rollback()
+        logging.exception("Delete contract approval failed")
+        return jsonify({'status': 'fail', 'message': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+# 🔥 수주품의서 목록 조회 (GET)
+@contractApproval_bp.route('/contractApproval', methods=['GET'])
+def list_contract_approvals():
     conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
         # 쿼리 파라미터 가져오기
-        estimate_no = request.args.get('estimateNo', '').strip()
-        estimate_version = request.args.get('estimateVersion', '').strip()
-        contract_review_no = request.args.get('contractReviewNo', '').strip()
-        created_at = request.args.get('createdAt', '').strip()
-        execute_date = request.args.get('executeDate', '').strip()
-        customer_company = request.args.get('customerCompany', '').strip()
-        end_customer = request.args.get('endCustomer', '').strip()
+        contract_approval_no = request.args.get('contractApprovalNo')
+        project_name = request.args.get('projectName')
+        customer_company = request.args.get('customerCompany')
+        end_customer = request.args.get('endCustomer')
+        created_at = request.args.get('createdAt')
 
         # 기본 SQL 쿼리
         query = """
             SELECT
-                cr.id AS contract_review_id,
-                cr.contract_review_no,
-                cr.project_name,
-                cr.estimate_id,
-                DATE_FORMAT(cr.execute_date, '%%Y/%%m/%%d') AS execute_date,
-                cr.contract_amount,
-                DATE_FORMAT(cr.created_at, '%%Y/%%m/%%d') AS created_at,
-                cr.updated_at,
-                cr.customer_company_id,
-                cr.end_customer_id,
-                cr.opinion,
-                e.quote_id,
+                ca.contract_approval_id,
+                ca.contract_approval_no,
+                ca.project_name,
+                ca.contract_start_date,
+                ca.contract_end_date,
+                ca.sales_amount,
+                DATE_FORMAT(ca.created_at, '%%Y/%%m/%%d') AS created_at,
                 c.customer_nm AS customer_company_name,
-                c2.customer_nm AS end_customer_name
-            FROM contract_review cr
-            LEFT JOIN estimate e ON cr.estimate_id = e.id  
-            LEFT JOIN customer c ON cr.customer_company_id = c.customer_id
-            LEFT JOIN customer c2 ON cr.end_customer_id = c2.customer_id
+                ec.customer_nm AS end_customer_name
+            FROM contract_approval ca
+            LEFT JOIN customer c ON ca.customer_company_id = c.customer_id
+            LEFT JOIN customer ec ON ca.end_customer_id = ec.customer_id
             WHERE 1=1
         """
 
         # 조건 추가
         params = []
-        if estimate_no:
-            query += " AND e.quote_id LIKE %s"
-            params.append(f"%{estimate_no}%")
-        if estimate_version:
-            query += " AND e.version = %s"
-            params.append(estimate_version)
-        if contract_review_no:
-            query += " AND cr.contract_review_no LIKE %s"
-            params.append(f"%{contract_review_no}%")
-        if created_at:
-            query += " AND DATE(cr.created_at) = %s"
-            params.append(created_at)
-        if execute_date:
-            query += " AND DATE(cr.execute_date) = %s"
-            params.append(execute_date)
+        if contract_approval_no:
+            query += " AND ca.contract_approval_no LIKE %s"
+            params.append(f"%{contract_approval_no}%")
+        if project_name:
+            query += " AND ca.project_name LIKE %s"
+            params.append(f"%{project_name}%")
         if customer_company:
             query += " AND c.customer_nm LIKE %s"
             params.append(f"%{customer_company}%")
         if end_customer:
-            query += " AND c2.customer_nm LIKE %s"
+            query += " AND ec.customer_nm LIKE %s"
             params.append(f"%{end_customer}%")
+        if created_at:
+            query += " AND DATE(ca.created_at) = %s"
+            params.append(created_at)
 
         # 정렬 추가
-        query += " ORDER BY cr.created_at DESC"
-
-
-        logging.info(f"[최종 쿼리] {query}")
-        logging.info(f"[파라미터] {params}")
-
+        query += " ORDER BY ca.created_at DESC"
 
         # 쿼리 실행
         cursor.execute(query, params)
         results = cursor.fetchall()
 
+        # camelCase 변환
+        results = convert_keys_to_camel_case(results)
+
         return jsonify({'status': 'success', 'data': results})
     except Exception as e:
-        logging.error(f"[계약 검토서 목록 조회 오류] {e}")
-        return jsonify({'status': 'error', 'message': str(e)})
-    finally:
-        cursor.close()
-        conn.close()
-
-
-
-
-
-@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['GET'])
-def get_contract_review(id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # 마스터 정보
-        sql = """
-            SELECT
-                cr.id AS contract_review_id,
-                cr.contract_review_no,
-                cr.project_name,
-                cr.estimate_id,
-                DATE_FORMAT(cr.execute_date, '%%Y-%%m-%%d') AS execute_date,
-                cr.contract_amount,
-                cr.created_at,
-                cr.updated_at,
-                cr.customer_company_id,
-                cr.end_customer_id,
-                cr.opinion,
-                e.quote_id as estimate_no,
-                e.version,
-                cr.unty_file_no,
-                c.customer_nm AS customer_company,
-                c2.customer_nm AS end_customer
-            FROM contract_review cr
-            LEFT JOIN estimate e ON cr.estimate_id = e.id
-            LEFT JOIN customer c ON cr.customer_company_id = c.customer_id
-            LEFT JOIN customer c2 ON cr.end_customer_id = c2.customer_id
-            WHERE cr.id = %s
-        """
-        cursor.execute(sql, (id,))
-        review = cursor.fetchone()
-        review = convert_keys_to_camel_case(review)
-
-        if not review:
-            return jsonify({'status': 'error', 'message': '존재하지 않는 검토서입니다.'}), 404
-
-        # 매출 흐름도
-        cursor.execute("SELECT route_text FROM contract_sales_route WHERE contract_review_id = %s", (id,))
-        sales_routes = [row['route_text'] for row in cursor.fetchall()]
-        sales_routes = convert_keys_to_camel_case(sales_routes)
-        review['salesRoute'] = sales_routes
-
-        # 계약 상세 정보
-        cursor.execute("SELECT * FROM contract_detail WHERE contract_review_id = %s", (id,))
-        contract_detail = cursor.fetchall()
-        contract_detail = convert_keys_to_camel_case(contract_detail)
-        review['contractDetails'] = contract_detail
-
-        return jsonify({'status': 'success', 'data': review})
-    except Exception as e:
-        logging.error(e)
-        return jsonify({'status': 'error', 'message': str(e)})
-    finally:
-        cursor.close()
-        conn.close()
-
-
-
-
-
-@contractApproval_bp.route('/contractApprovals', methods=['POST'])
-def create_contract_review():
-    data = request.get_json()
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # 0. 오늘 날짜 기반으로 채번 번호 생성
-        today = datetime.today().strftime('%Y%m%d')  # YYYYMMDD 형식
-        cursor.execute("""
-            SELECT COUNT(*) + 1 AS next_seq
-            FROM contract_review
-            WHERE DATE(created_at) = CURDATE()
-        """)
-        next_seq = cursor.fetchone()['next_seq']
-        contract_review_no = f"REV-{today}-{next_seq:03d}"  # REV-YYYYMMDD-XXX 형식
-
-
-        # 1. 마스터 저장
-        insert_review_sql = """
-            INSERT INTO contract_review (
-                contract_review_no, project_name, estimate_id, execute_date,
-                customer_company_id, end_customer_id, opinion,
-                contract_amount, unty_file_no
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        review_values = (
-            contract_review_no, data['projectName'], data.get('estimateId'), data.get('executeDate'),
-            data.get('customerCompanyId'), data.get('endCustomerId'), data.get('opinion'),
-            data.get('contractAmount'), data.get('untyFileNo')
-        )
-        cursor.execute(insert_review_sql, review_values)
-        review_id = cursor.lastrowid
-
-        # 2. 매출 흐름 저장
-        insert_route_sql = """
-            INSERT INTO contract_sales_route (contract_review_id, route_text)
-            VALUES (%s, %s)
-        """
-        for route in data.get('salesRoute', []):
-            cursor.execute(insert_route_sql, (review_id, route))
-
-        # 3. 계약 세부사항 저장
-        insert_detail_sql = """
-            INSERT INTO contract_detail (contract_review_id, category, standard, detail)
-            VALUES (%s, %s, %s, %s)
-        """
-        for item in data.get('contractDetails', []):
-            cursor.execute(insert_detail_sql, (
-                review_id,
-                item.get('category'),
-                item.get('standard'),
-                item.get('detail')
-            ))
-
-        conn.commit()
-        return jsonify({'status': 'success', 'newId': review_id})
-    except Exception as e:
-        logging.error(e)
-        conn.rollback()
-        return jsonify({'status': 'error', 'message': str(e)})
-    finally:
-        cursor.close()
-        conn.close()
-
-
-
-
-
-@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['PUT'])
-def update_contract_review(id):
-    data = request.get_json()
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # 1. 마스터 수정
-        update_sql = """
-            UPDATE contract_review SET
-                project_name = %s, estimate_id = %s, execute_date = %s,
-                customer_company_id = %s, end_customer_id = %s, opinion = %s,
-                contract_amount = %s, unty_file_no = %s,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-        """
-        cursor.execute(update_sql, (
-            data['projectName'], data.get('estimateId'), data.get('executeDate'),
-            data.get('customerCompanyId'), data.get('endCustomerId'), data.get('opinion'),
-            data.get('contractAmount'), data.get('untyFileNo'), id
-        ))
-
-        # 2. 기존 매출 흐름 삭제 후 재삽입
-        cursor.execute("DELETE FROM contract_sales_route WHERE contract_review_id = %s", (id,))
-        insert_route_sql = "INSERT INTO contract_sales_route (contract_review_id, route_text) VALUES (%s, %s)"
-        for route in data.get('salesRoute', []):
-            cursor.execute(insert_route_sql, (id, route))
-
-        # 3. 기존 계약 세부사항 삭제
-        cursor.execute("DELETE FROM contract_detail WHERE contract_review_id = %s", (id,))
-
-        # 4. 새로운 계약 세부사항 삽입
-        insert_detail_sql = """
-            INSERT INTO contract_detail (contract_review_id, category, standard, detail)
-            VALUES (%s, %s, %s, %s)
-        """
-        for item in data.get('contractDetails', []):
-            cursor.execute(insert_detail_sql, (
-                id,
-                item.get('category'),
-                item.get('standard'),
-                item.get('detail')
-            ))
-
-        conn.commit()
-        return jsonify({'status': 'success', 'updatedId': id})
-    except Exception as e:
-        logging.error(e)
-        conn.rollback()
-        return jsonify({'status': 'error', 'message': str(e)})
-    finally:
-        cursor.close()
-        conn.close()
-
-
-
-
-
-@contractApproval_bp.route('/contractApprovals/<int:id>', methods=['DELETE'])
-def delete_contract_review(id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        # 1. 수주품의서 존재 여부 확인
-        cursor.execute("SELECT id FROM contract_approval WHERE id = %s", (id,))
-        review = cursor.fetchone()
-        if not review:
-            return jsonify({'status': 'error', 'message': '존재하지 않는 계약 검토서입니다.'}), 404
-
-        # 2. 관련 데이터 삭제
-        # cursor.execute("DELETE FROM contract_sales_route WHERE contract_review_id = %s", (id,))
-        # cursor.execute("DELETE FROM contract_detail WHERE contract_review_id = %s", (id,))
-        # cursor.execute("DELETE FROM contract_review WHERE id = %s", (id,))
-
-        conn.commit()
-        return jsonify({'status': 'success', 'deletedId': id})
-    except Exception as e:
-        logging.error(f"[계약 검토서 삭제 오류] {e}")
-        conn.rollback()
-        return jsonify({'status': 'error', 'message': str(e)})
+        logging.error(f"[수주품의서 목록 조회 오류] {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
     finally:
         cursor.close()
         conn.close()

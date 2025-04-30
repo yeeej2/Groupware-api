@@ -68,7 +68,7 @@ def search_users():
     cursor = conn.cursor()
 
     # 기본 쿼리
-    query = "SELECT usr_id AS id, name, email, phone FROM user WHERE 1=1"
+    query = "SELECT usr_id AS id, name, email, phone, position FROM user WHERE 1=1"
     params = []
 
     # 사용자 유형 필터 추가
@@ -166,6 +166,39 @@ def get_users():
 
     if user:
         return jsonify({'result': 'success', "data" : user}), 200
+    else:
+        return jsonify({'message': 'User not found'}), 404
+    
+
+
+@users_bp.route('/roles', methods=['GET'])
+def get_roles():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM roles;", ())
+    roles = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if roles:
+        return jsonify({'result': 'success', "data" : roles}), 200
+    else:
+        return jsonify({'message': 'User not found'}), 404
+    
+
+@users_bp.route('/screens', methods=['GET'])
+def get_screens():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM screens;", ())
+    screens = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    if screens:
+        return jsonify({'result': 'success', "data" : screens}), 200
     else:
         return jsonify({'message': 'User not found'}), 404
     
@@ -296,6 +329,49 @@ def change_password():
     except Exception as e:
         conn.rollback()
         return jsonify({"error": "비밀번호 변경 실패", "message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+
+
+
+@users_bp.route('/users/updateRole', methods=['POST'])
+def update_user_role():
+    data = request.get_json()
+    logging.info("ssssssssssssss")
+    logging.info(data)
+    user_id = data.get("user_id")
+    role_id = data.get("role_id")
+
+    if not user_id or not role_id:
+        return jsonify({"error": "user_id와 role_id는 필수입니다."}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 유저가 있는지 확인
+        cursor.execute("SELECT * FROM user WHERE usr_id = %s", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({"error": "존재하지 않는 사용자입니다."}), 404
+
+        # 역할 업데이트
+        cursor.execute("""
+            UPDATE user
+            SET role_cd = %s
+            WHERE usr_id = %s
+        """, (role_id, user_id))
+
+        conn.commit()
+        return jsonify({"result": "success"}), 200
+
+    except Exception as e:
+        print("DB 오류:", e)
+        return jsonify({"error": "역할 업데이트 중 오류 발생"}), 500
     finally:
         cursor.close()
         conn.close()

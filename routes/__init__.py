@@ -15,6 +15,7 @@ from .login import login_bp
 from .excel import excel_bp
 from .contractReivew import contractReivew_bp   
 from .contractApproval import contractApproval_bp  
+from .permissions import permissions_bp  
 
 # 📌 Blueprint 등록
 def register_blueprints(app):
@@ -32,3 +33,4 @@ def register_blueprints(app):
     app.register_blueprint(excel_bp)  # 엑셀 관련 API 등록
     app.register_blueprint(contractReivew_bp)  # 계약검토서 관련 API 등록
     app.register_blueprint(contractApproval_bp)  # 계약검토서 관련 API 등록
+    app.register_blueprint(permissions_bp)  # 권한 관련 API 등록
