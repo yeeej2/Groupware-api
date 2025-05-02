@@ -173,9 +173,11 @@ def get_contract_approval(contract_approval_id):
                    tu.phone AS tax_invoice_manager_phone,
                     CASE 
                         WHEN ca.payment_type != '일시납' AND ca.payment_type != '월납' THEN '기타'
+                        ELSE ca.payment_type
                     END AS payment_type,
                     CASE 
                         WHEN ca.vendor_payment_type != '일시납' AND ca.vendor_payment_type != '월납' THEN '기타'
+                        ELSE ca.vendor_payment_type
                     END AS vendor_payment_type,
                     ca.payment_type AS payment_type_other,
                     ca.vendor_payment_type AS vendor_payment_type_other, 
@@ -312,10 +314,9 @@ def list_contract_approvals():
     try:
         # 쿼리 파라미터 가져오기
         contract_approval_no = request.args.get('contractApprovalNo')
-        project_name = request.args.get('projectName')
+        created_at = request.args.get('createdAt')
         customer_company = request.args.get('customerCompany')
         end_customer = request.args.get('endCustomer')
-        created_at = request.args.get('createdAt')
 
         # 기본 SQL 쿼리
         query = """
@@ -340,18 +341,15 @@ def list_contract_approvals():
         if contract_approval_no:
             query += " AND ca.contract_approval_no LIKE %s"
             params.append(f"%{contract_approval_no}%")
-        if project_name:
-            query += " AND ca.project_name LIKE %s"
-            params.append(f"%{project_name}%")
+        if created_at:
+            query += " AND DATE(ca.created_at) = %s"
+            params.append(created_at)
         if customer_company:
             query += " AND c.customer_nm LIKE %s"
             params.append(f"%{customer_company}%")
         if end_customer:
             query += " AND ec.customer_nm LIKE %s"
             params.append(f"%{end_customer}%")
-        if created_at:
-            query += " AND DATE(ca.created_at) = %s"
-            params.append(created_at)
 
         # 정렬 추가
         query += " ORDER BY ca.created_at DESC"
